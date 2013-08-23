@@ -34,6 +34,11 @@
 #include <linux/module.h>
 #include <linux/usb.h>
 
+#include <media/v4l2-device.h>
+#include <media/v4l2-ioctl.h>
+#include <media/videobuf2-core.h>
+#include <media/videobuf2-vmalloc.h>
+
 #define SMI2021_DRIVER_VERSION "0.1"
 
 /* General USB control setup */
@@ -44,6 +49,11 @@
 
 /* Hardware constants */
 #define SMI2021_HW_STATE_HEAD		0x01
+
+/* General video constants */
+#define SMI2021_BYTES_PER_LINE	1440
+#define SMI2021_PAL_LINES	576
+#define SMI2021_NTSC_LINES	484
 
 #ifdef DEBUG
 #define smi2021_dbg(fmt, args...)		\
@@ -71,8 +81,50 @@ struct smi2021_set_hw_state {
 	u8 state;
 } __packed;
 
+/* A single videobuf2 frame buffer */
+struct smi2021_buf {
+	/* Common vb2 stuff, must be first */
+	struct vb2_buffer		vb;
+	struct list_head		list;
+
+	void				*mem;
+	unsigned int			length;
+
+	bool				active;
+	bool				second_field;
+	bool				in_blank;
+	unsigned int			pos;
+
+	/* ActiveVideo - Line counter */
+	u16				trc_av;
+};
+
+struct smi2021 {
+	struct device			*dev;
+	struct usb_device		*udev;
+	struct v4l2_device		v4l2_dev;
+	struct video_device		vdev;
+	struct vb2_queue		vb2q;
+	struct mutex			v4l2_lock;
+	struct mutex			vb2q_lock;
+
+	/* List of videobuf2 buffers protected by a lock. */
+	spinlock_t			buf_lock;
+	struct list_head		bufs;
+
+	int				sequence;
+
+	/* Frame settings */
+	int				cur_height;
+	v4l2_std_id			cur_norm;
+};
+
 /* Provided by smi2021_bootloader.c */
 int smi2021_bootloader_probe(struct usb_interface *intf,
 					const struct usb_device_id *devid);
 void smi2021_bootloader_disconnect(struct usb_interface *intf);
+
+/* Provided by smi2021_v4l2.c */
+int smi2021_vb2_setup(struct smi2021 *smi2021);
+int smi2021_video_register(struct smi2021 *smi2021);
 #endif /* SMI2021_H */
