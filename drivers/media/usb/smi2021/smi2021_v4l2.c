@@ -50,10 +50,10 @@ static int vidioc_enum_input(struct file *file, void *priv,
 {
 	struct smi2021 *smi2021 = video_drvdata(file);
 
-	if (i->index != 0)
+	if (i->index >= smi2021->vid_input_count)
 		return -EINVAL;
 
-	strlcpy(i->name, "Test Input", sizeof(i->name));
+	strlcpy(i->name, smi2021->vid_inputs[i->index].name, sizeof(i->name));
 	i->type = V4L2_INPUT_TYPE_CAMERA;
 	i->std = smi2021->vdev.tvnorms;
 	return 0;
@@ -97,7 +97,7 @@ static int vidioc_g_std(struct file *file, void *priv, v4l2_std_id *norm)
 static int vidioc_g_input(struct file *file, void *priv, unsigned int *i)
 {
 	struct smi2021 *smi2021 = video_drvdata(file);
-	*i = 0;
+	*i = smi2021->cur_input;
 	return 0;
 }
 
@@ -109,22 +109,26 @@ static int vidioc_s_std(struct file *file, void *priv, v4l2_std_id norm)
 		return -EBUSY;
 
 	smi2021->cur_norm = norm;
-	if (norm & V4L2_STD_525_60) {
+	if (norm & V4L2_STD_525_60)
 		smi2021->cur_height = SMI2021_NTSC_LINES;
-	} else if (norm & V4L2_STD_625_50) {
+	else if (norm & V4L2_STD_625_50)
 		smi2021->cur_height = SMI2021_PAL_LINES;
-	} else {
+	else
 		return -EINVAL;
-	}
 
+	v4l2_device_call_all(&smi2021->v4l2_dev, 0, core, s_std, smi2021->cur_norm);
 	return 0;
 }
 
 static int vidioc_s_input(struct file *file, void *priv, unsigned int i)
 {
 	struct smi2021 *smi2021 = video_drvdata(file);
-	if (i != 0)
+	if (i >= smi2021->vid_input_count)
 		return -EINVAL;
+
+	v4l2_device_call_all(&smi2021->v4l2_dev, 0, video, s_routing,
+		smi2021->vid_inputs[i].type, 0, 0);
+	smi2021->cur_input = i;
 
 	return 0;
 }
@@ -199,11 +203,9 @@ static void buffer_queue(struct vb2_buffer *vb)
 	buf->trc_av = 0;
 	buf->in_blank = true;
 	buf->second_field = false;
-	buf->active = false;
 
 	spin_lock_irqsave(&smi2021->buf_lock, flags);
 	if (buf->length < smi2021->cur_height * SMI2021_BYTES_PER_LINE) {
-		printk_ratelimited(KERN_INFO "To smal buffer!\n");
 		vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
 	} else {
 		list_add_tail(&buf->list, &smi2021->bufs);
@@ -218,7 +220,7 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 	if (smi2021->udev == NULL)
 		return -ENODEV;
 
-	return -EINVAL;
+	return smi2021_start(smi2021);
 }
 
 static int stop_streaming(struct vb2_queue *vq)
@@ -228,7 +230,8 @@ static int stop_streaming(struct vb2_queue *vq)
 	if (smi2021->udev == NULL)
 		return -ENODEV;
 
-	return -EINVAL;
+	smi2021_stop(smi2021);
+	return 0;
 }
 
 static struct vb2_ops smi2021_vb2_ops = {
