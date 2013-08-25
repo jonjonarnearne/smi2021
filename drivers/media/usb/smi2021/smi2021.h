@@ -42,6 +42,11 @@
 #include <media/videobuf2-vmalloc.h>
 #include <media/saa7115.h>
 
+#include <sound/core.h>
+#include <sound/pcm.h>
+#include <sound/pcm_params.h>
+#include <sound/initval.h>
+
 #define SMI2021_DRIVER_VERSION "0.1"
 
 #define SMI2021_ISOC_TRANSFERS	16
@@ -150,6 +155,16 @@ struct smi2021 {
 	int				cur_height;
 	v4l2_std_id			cur_norm;
 	enum smi2021_sync		sync_state;
+	
+	struct snd_card			*snd_card;
+	struct snd_pcm_substream	*pcm_substream;
+
+	unsigned int			pcm_write_ptr;
+	unsigned int			pcm_complete_samples;
+
+	u8				pcm_read_offset;
+	struct work_struct		adev_capture_trigger;
+	atomic_t			adev_capturing;
 
 	/* Device settings */
 	unsigned int		vid_input_count;
@@ -166,10 +181,17 @@ int smi2021_bootloader_probe(struct usb_interface *intf,
 void smi2021_bootloader_disconnect(struct usb_interface *intf);
 
 /* Provided by smi2021_main.c */
+void smi2021_toggle_audio(struct smi2021 *smi2021, bool enable);
 int smi2021_start(struct smi2021 *smi2021);
 void smi2021_stop(struct smi2021 *smi2021);
  
 /* Provided by smi2021_v4l2.c */
 int smi2021_vb2_setup(struct smi2021 *smi2021);
 int smi2021_video_register(struct smi2021 *smi2021);
+
+/* Provided by smi2021_audio.c */
+int smi2021_snd_register(struct smi2021 *smi2021);
+void smi2021_snd_unregister(struct smi2021 *smi2021);
+void smi2021_stop_audio(struct smi2021 *smi2021);
+void smi2021_audio(struct smi2021 *smi2021, u8 *data, int len);
 #endif /* SMI2021_H */

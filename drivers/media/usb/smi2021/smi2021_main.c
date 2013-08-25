@@ -525,6 +525,9 @@ static void process_packet(struct smi2021 *smi2021, u8 *p, int size)
 		case cpu_to_be32(0xaaaa0000):
 			parse_video(smi2021, p+i+4, 0x400-4);
 			break;
+		case cpu_to_be32(0xaaaa0001):
+			smi2021_audio(smi2021, p+i+4, 0x400-4);
+			break;
 		}
 	}
 }
@@ -588,6 +591,15 @@ static struct urb *smi2021_setup_iso_transfer(struct smi2021 *smi2021)
 	}
 
 	return ip;
+}
+
+void smi2021_toggle_audio(struct smi2021 *smi2021, bool enable)
+{
+	if (enable)
+		smi2021_set_reg(smi2021, 0, 0x1740, 0x1d);
+	else
+		smi2021_set_reg(smi2021, 0, 0x1740, 0x00);
+	
 }
 
 int smi2021_start(struct smi2021 *smi2021)
@@ -659,6 +671,8 @@ void smi2021_stop(struct smi2021 *smi2021)
 
 	usb_set_interface(smi2021->udev, 0, 0);
 	smi2021_set_mode(smi2021, 0x03);
+
+	smi2021_stop_audio(smi2021);
 
 	/* Return buffers to userspace */
 	spin_lock_irqsave(&smi2021->buf_lock, flags);
@@ -836,6 +850,7 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	v4l2_device_call_all(&smi2021->v4l2_dev, 0, core, s_std, smi2021->cur_norm);
 
 	usb_set_intfdata(intf, smi2021);
+	smi2021_snd_register(smi2021);
 	
 
 	/* video structure */
@@ -872,6 +887,7 @@ static void smi2021_usb_disconnect(struct usb_interface *intf)
 		return smi2021_bootloader_disconnect(intf);
 
 	smi2021 = usb_get_intfdata(intf);
+	smi2021_snd_unregister(smi2021);
 
 	mutex_lock(&smi2021->vb2q_lock);
 	mutex_lock(&smi2021->v4l2_lock);
