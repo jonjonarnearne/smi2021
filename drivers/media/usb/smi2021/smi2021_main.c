@@ -33,26 +33,43 @@
 #define VENDOR_ID 0x1c88
 #define BOOTLOADER_ID 0x0007
 
+#define SMI2021_MODE_CTRL_HEAD		0x01
+#define SMI2021_MODE_CAPTURE		0x05
+#define SMI2021_MODE_STANDBY		0x03
+#define SMI2021_REG_CTRL_HEAD		0x0b
+
 static int smi2021_set_mode(struct smi2021 *smi2021, u8 mode)
 {
 	int pipe, rc;
-	u8 *transfer_buf = kzalloc(2, GFP_KERNEL);
+	struct mode_ctrl_transfer {
+		u8 head;
+		u8 mode;
+	} *transfer_buf = kzalloc(sizeof(*transfer_buf), GFP_KERNEL);
 	if (transfer_buf == NULL)
 		return -ENOMEM;
 
-	transfer_buf[0] = 0x01;
-	transfer_buf[1] = mode;
+	transfer_buf->head = SMI2021_MODE_CTRL_HEAD;
+	transfer_buf->mode = mode;
 	
 	pipe = usb_sndctrlpipe(smi2021->udev, SMI2021_USB_SNDPIPE); 
 	rc = usb_control_msg(smi2021->udev, pipe, SMI2021_USB_REQUEST,
 			USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-			0x01, SMI2021_USB_INDEX, transfer_buf, 2, 1000);
+			transfer_buf->head, SMI2021_USB_INDEX,
+			transfer_buf, sizeof(*transfer_buf), 1000);
+
 	kfree(transfer_buf);
 
 	return rc;
 }
 
-struct smi2021_transfer {
+/*
+ * The smi2021 chip will handle two different types of register settings.
+ * Settings for the gm7113c chip via i2c or settings for the smi2021 chip.
+ * All settings are passed with the following struct.
+ * Some bits in data_offset and data_cntl parameters tells the device what
+ * kind of setting it's receiving and if it's a read or write request.
+ */
+struct smi2021_reg_ctrl_transfer {
 	u8 head;
 	u8 i2c_addr;
 	u8 data_cntl;
@@ -76,18 +93,18 @@ struct smi2021_transfer {
 static int smi2021_set_reg(struct smi2021 *smi2021, u8 i2c_addr, u16 reg, u8 val)
 {
 	int rc, pipe;
-	struct smi2021_transfer *transfer_buf; 
+	struct smi2021_reg_ctrl_transfer *transfer_buf; 
 	
-	static const struct smi2021_transfer smi_data = {
-		.head = SMI2021_MAGIC_HEAD,
+	static const struct smi2021_reg_ctrl_transfer smi_data = {
+		.head = SMI2021_REG_CTRL_HEAD,
 		.i2c_addr = 0x00,
 		.data_cntl = 0x00,
 		.data_offset = 0x82,
 		.data_size = sizeof(u8),
 	};
 
-	static const struct smi2021_transfer i2c_data = {
-		.head = SMI2021_MAGIC_HEAD,
+	static const struct smi2021_reg_ctrl_transfer i2c_data = {
+		.head = SMI2021_REG_CTRL_HEAD,
 		.i2c_addr = 0x00,
 		.data_cntl = 0xc0,
 		.data_offset = 0x01,
@@ -99,7 +116,7 @@ static int smi2021_set_reg(struct smi2021 *smi2021, u8 i2c_addr, u16 reg, u8 val
 		goto out;
 	}
 
-	transfer_buf = kzalloc(sizeof(struct smi2021_transfer), GFP_KERNEL);
+	transfer_buf = kzalloc(sizeof(*transfer_buf), GFP_KERNEL);
 	if (transfer_buf == NULL) {
 		rc = -ENOMEM;
 		goto out;
@@ -131,18 +148,18 @@ out:
 static int smi2021_get_reg(struct smi2021 *smi2021, u8 i2c_addr, u16 reg, u8 *val)
 {
 	int rc, pipe;
-	struct smi2021_transfer *transfer_buf;
+	struct smi2021_reg_ctrl_transfer *transfer_buf;
 
-	static const struct smi2021_transfer i2c_prepare_read = {
-		.head = SMI2021_MAGIC_HEAD,
+	static const struct smi2021_reg_ctrl_transfer i2c_prepare_read = {
+		.head = SMI2021_REG_CTRL_HEAD,
 		.i2c_addr = 0x00,
 		.data_cntl = 0x84,
 		.data_offset = 0x00,
 		.data_size = sizeof(u8) 
 	};
 
-	static const struct smi2021_transfer smi_read = {
-		.head = SMI2021_MAGIC_HEAD,
+	static const struct smi2021_reg_ctrl_transfer smi_read = {
+		.head = SMI2021_REG_CTRL_HEAD,
 		.i2c_addr = 0x00,
 		.data_cntl = 0x20,
 		.data_offset = 0x82,
@@ -156,7 +173,7 @@ static int smi2021_get_reg(struct smi2021 *smi2021, u8 i2c_addr, u16 reg, u8 *va
 		goto out;
 	}
 
-	transfer_buf = kzalloc(sizeof(struct smi2021_transfer), GFP_KERNEL);
+	transfer_buf = kzalloc(sizeof(*transfer_buf), GFP_KERNEL);
 	if (transfer_buf == NULL) {
 		rc = -ENOMEM;
 		goto out;
@@ -599,7 +616,6 @@ void smi2021_toggle_audio(struct smi2021 *smi2021, bool enable)
 		smi2021_set_reg(smi2021, 0, 0x1740, 0x1d);
 	else
 		smi2021_set_reg(smi2021, 0, 0x1740, 0x00);
-	
 }
 
 int smi2021_start(struct smi2021 *smi2021)
@@ -618,7 +634,7 @@ int smi2021_start(struct smi2021 *smi2021)
 		smi2021_set_reg(smi2021, 0x4a, 0x0e, 0x81);
 	}
 
-	rc = smi2021_set_mode(smi2021, 0x05);
+	rc = smi2021_set_mode(smi2021, SMI2021_MODE_CAPTURE);
 	if (rc < 0)
 		goto start_fail;
 
@@ -626,7 +642,7 @@ int smi2021_start(struct smi2021 *smi2021)
 	if (rc < 0)
 		goto start_fail;
 	
-	smi2021_set_reg(smi2021, 0, 0x1740, 0x00);
+	smi2021_toggle_audio(smi2021, false);
 
 	for (i = 0; i < SMI2021_ISOC_TRANSFERS; i++) {
 		struct urb *ip;
@@ -670,7 +686,7 @@ void smi2021_stop(struct smi2021 *smi2021)
 	}
 
 	usb_set_interface(smi2021->udev, 0, 0);
-	smi2021_set_mode(smi2021, 0x03);
+	smi2021_set_mode(smi2021, SMI2021_MODE_STANDBY);
 
 	smi2021_stop_audio(smi2021);
 
