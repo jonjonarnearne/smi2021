@@ -211,11 +211,10 @@ static void buffer_queue(struct vb2_buffer *vb)
 	buf->second_field = false;
 
 	spin_lock_irqsave(&smi2021->buf_lock, flags);
-	if (buf->length < smi2021->cur_height * SMI2021_BYTES_PER_LINE) {
+	if (buf->length < smi2021->cur_height * SMI2021_BYTES_PER_LINE)
 		vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
-	} else {
+	else
 		list_add_tail(&buf->list, &smi2021->bufs);
-	}
 	spin_unlock_irqrestore(&smi2021->buf_lock, flags);
 }
 

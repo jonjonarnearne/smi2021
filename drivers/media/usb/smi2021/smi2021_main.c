@@ -646,9 +646,8 @@ int smi2021_start(struct smi2021 *smi2021)
 	 */
 	smi2021_get_reg(smi2021, 0x4a, 0x0e, &reg);
 	reg |= 0x80;
-	for (i = 0; i < 6; i++) {
+	for (i = 0; i < 6; i++)
 		smi2021_set_reg(smi2021, 0x4a, 0x0e, reg);
-	}
 
 	rc = smi2021_set_mode(smi2021, SMI2021_MODE_CAPTURE);
 	if (rc < 0)
@@ -709,7 +708,7 @@ void smi2021_stop(struct smi2021 *smi2021)
 
 	/* Return buffers to userspace */
 	spin_lock_irqsave(&smi2021->buf_lock, flags);
-	while(!list_empty(&smi2021->bufs)) {
+	while (!list_empty(&smi2021->bufs)) {
 		struct smi2021_buf *buf = list_first_entry(&smi2021->bufs,
 						struct smi2021_buf, list);
 		vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
