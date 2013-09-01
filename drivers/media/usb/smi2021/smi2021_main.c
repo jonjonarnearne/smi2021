@@ -1,8 +1,8 @@
-/*******************************************************************************
- * smi2021_main.c                                                              *
- *                                                                             *
- * USB Driver for SMI2021 - EasyCAP                                            *
- * *****************************************************************************
+/************************************************************************
+ * smi2021_main.c							*
+ *									*
+ * USB Driver for SMI2021 - EasyCAP					*
+ * **********************************************************************
  *
  * Copyright 2011-2013 Jon Arne Jørgensen
  * <jonjon.arnearne--a.t--gmail.com>
@@ -50,8 +50,8 @@ static int smi2021_set_mode(struct smi2021 *smi2021, u8 mode)
 
 	transfer_buf->head = SMI2021_MODE_CTRL_HEAD;
 	transfer_buf->mode = mode;
-	
-	pipe = usb_sndctrlpipe(smi2021->udev, SMI2021_USB_SNDPIPE); 
+
+	pipe = usb_sndctrlpipe(smi2021->udev, SMI2021_USB_SNDPIPE);
 	rc = usb_control_msg(smi2021->udev, pipe, SMI2021_USB_REQUEST,
 			USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
 			transfer_buf->head, SMI2021_USB_INDEX,
@@ -90,11 +90,12 @@ struct smi2021_reg_ctrl_transfer {
 	} __packed data;
 } __packed;
 
-static int smi2021_set_reg(struct smi2021 *smi2021, u8 i2c_addr, u16 reg, u8 val)
+static int smi2021_set_reg(struct smi2021 *smi2021, u8 i2c_addr,
+			   u16 reg, u8 val)
 {
 	int rc, pipe;
-	struct smi2021_reg_ctrl_transfer *transfer_buf; 
-	
+	struct smi2021_reg_ctrl_transfer *transfer_buf;
+
 	static const struct smi2021_reg_ctrl_transfer smi_data = {
 		.head = SMI2021_REG_CTRL_HEAD,
 		.i2c_addr = 0x00,
@@ -108,7 +109,7 @@ static int smi2021_set_reg(struct smi2021 *smi2021, u8 i2c_addr, u16 reg, u8 val
 		.i2c_addr = 0x00,
 		.data_cntl = 0xc0,
 		.data_offset = 0x01,
-		.data_size = sizeof(u8) 
+		.data_size = sizeof(u8)
 	};
 
 	if (smi2021->udev == NULL) {
@@ -145,7 +146,8 @@ out:
 	return rc;
 }
 
-static int smi2021_get_reg(struct smi2021 *smi2021, u8 i2c_addr, u16 reg, u8 *val)
+static int smi2021_get_reg(struct smi2021 *smi2021, u8 i2c_addr,
+			   u16 reg, u8 *val)
 {
 	int rc, pipe;
 	struct smi2021_reg_ctrl_transfer *transfer_buf;
@@ -155,7 +157,7 @@ static int smi2021_get_reg(struct smi2021 *smi2021, u8 i2c_addr, u16 reg, u8 *va
 		.i2c_addr = 0x00,
 		.data_cntl = 0x84,
 		.data_offset = 0x00,
-		.data_size = sizeof(u8) 
+		.data_size = sizeof(u8)
 	};
 
 	static const struct smi2021_reg_ctrl_transfer smi_read = {
@@ -163,7 +165,7 @@ static int smi2021_get_reg(struct smi2021 *smi2021, u8 i2c_addr, u16 reg, u8 *va
 		.i2c_addr = 0x00,
 		.data_cntl = 0x20,
 		.data_offset = 0x82,
-		.data_size = sizeof(u8) 
+		.data_size = sizeof(u8)
 	};
 
 	*val = 0;
@@ -264,7 +266,7 @@ static u32 smi2021_i2c_functionality(struct i2c_adapter *adap)
 
 static struct i2c_algorithm smi2021_algo = {
 	.master_xfer = smi2021_i2c_xfer,
-	.functionality = smi2021_i2c_functionality,  
+	.functionality = smi2021_i2c_functionality,
 };
 
 /* gm7113c_init table overrides */
@@ -436,10 +438,6 @@ static void copy_video(struct smi2021 *smi2021, u8 p)
 		return;
 
 	if (buf->pos >= buf->length) {
-		printk_ratelimited(KERN_WARNING
-			"Buffer overflow!, max: %d bytes, av_lines_found: %d, second_field: %d\n",
-						buf->length, buf->trc_av,
-						buf->second_field);
 		smi2021_buf_done(smi2021);
 		return;
 	}
@@ -463,12 +461,8 @@ static void copy_video(struct smi2021 *smi2021, u8 p)
 	offset += (SMI2021_BYTES_PER_LINE * line * 2) + pos_in_line;
 
 	/* Will this ever happen? */
-	if (offset >= buf->length) {
-		printk_ratelimited(KERN_INFO
-		"Offset calculation error, field: %d, line: %d, pos_in_line: %d\n",
-			buf->second_field, line, pos_in_line);
+	if (offset >= buf->length)
 		return;
-	}
 
 	dst = buf->mem + offset;
 	*dst = p;
@@ -588,7 +582,7 @@ resubmit:
 	rc = usb_submit_urb(ip, GFP_ATOMIC);
 	if (rc)
 		dev_warn(smi2021->dev, "urb re-submit failed (%d)\n", rc);
-	
+
 }
 
 static struct urb *smi2021_setup_iso_transfer(struct smi2021 *smi2021)
@@ -663,12 +657,12 @@ int smi2021_start(struct smi2021 *smi2021)
 	rc = usb_set_interface(smi2021->udev, 0, 2);
 	if (rc < 0)
 		goto start_fail;
-	
+
 	smi2021_toggle_audio(smi2021, false);
 
 	for (i = 0; i < SMI2021_ISOC_TRANSFERS; i++) {
 		struct urb *ip;
-		
+
 		ip = smi2021_setup_iso_transfer(smi2021);
 		if (ip == NULL) {
 			rc = -ENOMEM;
@@ -705,7 +699,7 @@ void smi2021_stop(struct smi2021 *smi2021)
 		usb_kill_urb(ip);
 		kfree(ip->transfer_buffer);
 		usb_free_urb(ip);
-		smi2021->isoc_urbs[i] = NULL;	
+		smi2021->isoc_urbs[i] = NULL;
 	}
 
 	usb_set_interface(smi2021->udev, 0, 0);
@@ -738,11 +732,11 @@ static void smi2021_release(struct v4l2_device *v4l2_dev)
 	kfree(smi2021);
 }
 
-/******************************************************************************/
-/*                                                                            */
-/*          DEVICE  -  PROBE   &   DISCONNECT                                 */
-/*                                                                            */
-/******************************************************************************/
+/************************************************************************
+ *									*
+ *          DEVICE  -  PROBE   &   DISCONNECT				*
+ *									*
+ ***********************************************************************/
 
 static const struct usb_device_id smi2021_usb_device_id_table[] = {
 	{ USB_DEVICE(VENDOR_ID, BOOTLOADER_ID)	},
@@ -869,7 +863,7 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	smi2021->i2c_adap.algo = &smi2021_algo;
 	smi2021->i2c_adap.algo_data = smi2021;
 	i2c_set_adapdata(&smi2021->i2c_adap, &smi2021->v4l2_dev);
-	rc = i2c_add_adapter(&smi2021->i2c_adap);	
+	rc = i2c_add_adapter(&smi2021->i2c_adap);
 	if (rc < 0) {
 		dev_warn(dev, "Could not add i2c adapter\n");
 		goto i2c_fail;
@@ -885,12 +879,13 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 
 
 	v4l2_device_call_all(&smi2021->v4l2_dev, 0, video, s_routing,
-		smi2021->vid_inputs[smi2021->cur_input].type, 0, 0);
-	v4l2_device_call_all(&smi2021->v4l2_dev, 0, core, s_std, smi2021->cur_norm);
+			smi2021->vid_inputs[smi2021->cur_input].type, 0, 0);
+	v4l2_device_call_all(&smi2021->v4l2_dev, 0, core, s_std,
+			smi2021->cur_norm);
 
 	usb_set_intfdata(intf, smi2021);
 	smi2021_snd_register(smi2021);
-	
+
 
 	/* video structure */
 	rc = smi2021_video_register(smi2021);
@@ -940,14 +935,8 @@ static void smi2021_usb_disconnect(struct usb_interface *intf)
 	mutex_unlock(&smi2021->v4l2_lock);
 	mutex_unlock(&smi2021->vb2q_lock);
 
-	v4l2_device_put(&smi2021->v4l2_dev);	
+	v4l2_device_put(&smi2021->v4l2_dev);
 }
-
-/******************************************************************************/
-/*                                                                            */
-/*            MODULE  -  INIT  &  EXIT                                        */
-/*                                                                            */
-/******************************************************************************/
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Jon Arne Jørgensen <jonjon.arnearne--a.t--gmail.com>");
