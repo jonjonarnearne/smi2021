@@ -1,8 +1,8 @@
-/*******************************************************************************
- * smi2021.h                                                                   *
- *                                                                             *
- * USB Driver for SMI2021 - EasyCap                                            *
- * *****************************************************************************
+/************************************************************************
+ * smi2021.h								*
+ *									*
+ * USB Driver for SMI2021 - EasyCap					*
+ * **********************************************************************
  *
  * Copyright 2011-2013 Jon Arne Jørgensen
  * <jonjon.arnearne--a.t--gmail.com>
@@ -151,7 +151,7 @@ struct smi2021 {
 	int				cur_height;
 	v4l2_std_id			cur_norm;
 	enum smi2021_sync		sync_state;
-	
+
 	struct snd_card			*snd_card;
 	struct snd_pcm_substream	*pcm_substream;
 
@@ -180,7 +180,7 @@ void smi2021_bootloader_disconnect(struct usb_interface *intf);
 void smi2021_toggle_audio(struct smi2021 *smi2021, bool enable);
 int smi2021_start(struct smi2021 *smi2021);
 void smi2021_stop(struct smi2021 *smi2021);
- 
+
 /* Provided by smi2021_v4l2.c */
 int smi2021_vb2_setup(struct smi2021 *smi2021);
 int smi2021_video_register(struct smi2021 *smi2021);

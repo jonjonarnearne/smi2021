@@ -1,8 +1,8 @@
-/*******************************************************************************
- * smi2021_v4l2.c                                                              *
- *                                                                             *
- * USB Driver for smi2021 - EasyCap                                            *
- * *****************************************************************************
+/************************************************************************
+ * smi2021_v4l2.c							*
+ *									*
+ * USB Driver for smi2021 - EasyCap					*
+ * **********************************************************************
  *
  * Copyright 2011-2013 Jon Arne Jørgensen
  * <jonjon.arnearne--a.t--gmail.com>
@@ -76,7 +76,7 @@ static int vidioc_fmt_vid_cap(struct file *file, void *priv,
 {
 	struct smi2021 *smi2021 = video_drvdata(file);
 
-	f->fmt.pix.width = SMI2021_BYTES_PER_LINE / 2; 
+	f->fmt.pix.width = SMI2021_BYTES_PER_LINE / 2;
 	f->fmt.pix.height = smi2021->cur_height;
 	f->fmt.pix.pixelformat = V4L2_PIX_FMT_UYVY;
 	f->fmt.pix.field = V4L2_FIELD_INTERLACED;
@@ -116,7 +116,8 @@ static int vidioc_s_std(struct file *file, void *priv, v4l2_std_id norm)
 	else
 		return -EINVAL;
 
-	v4l2_device_call_all(&smi2021->v4l2_dev, 0, core, s_std, smi2021->cur_norm);
+	v4l2_device_call_all(&smi2021->v4l2_dev, 0, core, s_std,
+			     smi2021->cur_norm);
 	return 0;
 }
 
@@ -171,11 +172,11 @@ static struct v4l2_file_operations smi2021_fops = {
 	.unlocked_ioctl = video_ioctl2,
 };
 
-/******************************************************************************/
-/*                                                                            */
-/*          Videobuf2 operations                                              */
-/*                                                                            */
-/******************************************************************************/
+/************************************************************************
+ *									*
+ *          Videobuf2 operations					*
+ *									*
+ ***********************************************************************/
 static int queue_setup(struct vb2_queue *vq,
 				const struct v4l2_format *v4l2_fmt,
 				unsigned int *nbuffers, unsigned int *nplanes,

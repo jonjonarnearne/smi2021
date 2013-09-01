@@ -1,8 +1,8 @@
-/*******************************************************************************
- * smi2021_bootloader.c							       *
- *									       *
- * USB Driver for SMI2021 - EasyCAP                                            *
- * *****************************************************************************
+/************************************************************************
+ * smi2021_bootloader.c							*
+ *									*
+ * USB Driver for SMI2021 - EasyCAP					*
+ * **********************************************************************
  *
  * Copyright 2011-2013 Jon Arne Jørgensen
  * <jonjon.arnearne--a.t--gmail.com>
@@ -119,13 +119,7 @@ static int smi2021_load_firmware(struct usb_device *udev,
 			FIRMWARE_HW_STATE_HEAD, SMI2021_USB_INDEX,
 			hw_state, sizeof(*hw_state), 1000);
 
-	if (rc < 0) {
-		dev_err(&udev->dev,
-			"could not check if device is ready for firmware upload: %d\n",
-			rc);
-		goto free_out;
-	}
-	if (hw_state->state != FIRMWARE_HW_READY_STATE) {
+	if (rc < 0 || hw_state->state != FIRMWARE_HW_READY_STATE) {
 		dev_err(&udev->dev,
 			"device is not ready for firmware upload: %d\n", rc);
 		goto free_out;
@@ -200,7 +194,8 @@ int smi2021_bootloader_probe(struct usb_interface *intf,
 
 	/* Check what firmwares are available in the system */
 	for (i = 0; i < ARRAY_SIZE(available_fw); i++) {
-		dev_info(&udev->dev, "Looking for: %s\n", available_fw[i].name);
+		dev_info(&udev->dev, "Looking for: %s\n",
+			 available_fw[i].name);
 		rc = request_firmware(&firmware[firmwares + 1],
 			available_fw[i].name, &udev->dev);
 
@@ -259,4 +254,3 @@ void smi2021_bootloader_disconnect(struct usb_interface *intf)
 MODULE_FIRMWARE(SMI2021_3C_FIRMWARE);
 MODULE_FIRMWARE(SMI2021_3E_FIRMWARE);
 MODULE_FIRMWARE(SMI2021_3F_FIRMWARE);
-

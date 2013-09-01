@@ -1,8 +1,8 @@
-/*******************************************************************************
- * smi2021_audio.c                                                             *
- *                                                                             *
- * USB Driver for SMI2021 - EasyCap                                            *
- * *****************************************************************************
+/************************************************************************
+ * smi2021_audio.c							*
+ *									*
+ * USB Driver for SMI2021 - EasyCap					*
+ * **********************************************************************
  *
  * Copyright 2011-2013 Jon Arne Jørgensen
  * <jonjon.arnearne--a.t--gmail.com>
@@ -188,8 +188,9 @@ static snd_pcm_uframes_t smi2021_pcm_pointer(
 	return smi2021->pcm_write_ptr / 8;
 }
 
-static struct page *smi2021_pcm_get_vmalloc_page(struct snd_pcm_substream *subs,
-						unsigned long offset)
+static struct page *smi2021_pcm_get_vmalloc_page(
+					struct snd_pcm_substream *subs,
+					unsigned long offset)
 {
 	void *pageptr = subs->runtime->dma_area + offset;
 
@@ -261,7 +262,8 @@ void smi2021_snd_unregister(struct smi2021 *smi2021)
 
 void smi2021_stop_audio(struct smi2021 *smi2021)
 {
-	/* HACK: Stop the audio subsystem,
+	/*
+	 * HACK: Stop the audio subsystem,
 	 * without this, the pcm middle-layer will hang waiting for more data.
 	 *
 	 * Is there a better way to do this?
@@ -397,4 +399,3 @@ void smi2021_audio(struct smi2021 *smi2021, u8 *data, int len)
 		snd_pcm_period_elapsed(smi2021->pcm_substream);
 
 }
-
