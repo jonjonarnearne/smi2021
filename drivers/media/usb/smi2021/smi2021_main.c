@@ -287,6 +287,13 @@ static struct i2c_board_info gm7113c_info = {
 static int smi2021_initialize(struct smi2021 *smi2021)
 {
 	int i, rc;
+
+	/*
+	 * These registers initializes the smi2021 chip,
+	 * but I have not been able to figure out exactly what they do.
+	 * My guess is that they toggle the reset pins of the
+	 * cs5350 and gm7113c chips.
+	 */
 	static const u16 init[][2] = {
 		{ 0x3a, 0x80 },
 		{ 0x3b, 0x00 },
@@ -612,6 +619,11 @@ static struct urb *smi2021_setup_iso_transfer(struct smi2021 *smi2021)
 
 void smi2021_toggle_audio(struct smi2021 *smi2021, bool enable)
 {
+	/*
+	 * I know that setting this register enables and disables
+	 * the transfer of audio data over usb.
+	 * I have no idea about what the number 0x1d really represents.
+	 * */
 	if (enable)
 		smi2021_set_reg(smi2021, 0, 0x1740, 0x1d);
 	else
@@ -621,17 +633,27 @@ void smi2021_toggle_audio(struct smi2021 *smi2021, bool enable)
 int smi2021_start(struct smi2021 *smi2021)
 {
 	int i, rc;
-
+	u8 reg;
 	smi2021->sync_state = HSYNC;
 
 	v4l2_device_call_all(&smi2021->v4l2_dev, 0, video, s_stream, 1);
 
-	/* Unneeded HACK?? - Enble automatic field detection (Bit 7)*/
-	smi2021_set_reg(smi2021, 0x4a, 0x08, 0x98);
+	/*
+	 * Enble automatic field detection on gm7113c (Bit 7)
+	 * It seems the device needs this to not fail when receiving bad video
+	 * i.e. from an old VHS tape.
+	 */
+	smi2021_get_reg(smi2021, 0x4a, 0x08, &reg);
+	smi2021_set_reg(smi2021, 0x4a, 0x08, reg | 0x80);
 
-	/* Unneeded HACK? - Reset RTSO0 6 Times (Bit 7)*/
+	/*
+	 * Reset RTSO0 6 Times (Bit 7)
+	 * The Windows driver does this, not sure if it's really needed.
+	 */
+	smi2021_get_reg(smi2021, 0x4a, 0x0e, &reg);
+	reg |= 0x80;
 	for (i = 0; i < 6; i++) {
-		smi2021_set_reg(smi2021, 0x4a, 0x0e, 0x81);
+		smi2021_set_reg(smi2021, 0x4a, 0x0e, reg);
 	}
 
 	rc = smi2021_set_mode(smi2021, SMI2021_MODE_CAPTURE);
@@ -658,6 +680,7 @@ int smi2021_start(struct smi2021 *smi2021)
 			goto start_fail;
 	}
 
+	/* I have no idea about what this register does with this value. */
 	smi2021_set_reg(smi2021, 0, 0x1800, 0x0d);
 
 	return 0;
