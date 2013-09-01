@@ -40,6 +40,7 @@
 
 #define FIRMWARE_CHUNK_HEAD_0	0x05
 #define FIRMWARE_CHUNK_HEAD_1	0xff
+#define FIRMWARE_HW_STATE_HEAD	0x01
 #define FIRMWARE_HW_READY_STATE	0x07
 
 #define SMI2021_3C_FIRMWARE	"smi2021_3c.bin"
@@ -115,7 +116,7 @@ static int smi2021_load_firmware(struct usb_device *udev,
 	rc = usb_control_msg(udev, usb_rcvctrlpipe(udev, SMI2021_USB_RCVPIPE),
 			SMI2021_USB_REQUEST,
 			USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
-			SMI2021_HW_STATE_HEAD, SMI2021_USB_INDEX,
+			FIRMWARE_HW_STATE_HEAD, SMI2021_USB_INDEX,
 			hw_state, sizeof(*hw_state), 1000);
 
 	if (rc < 0) {

@@ -59,11 +59,6 @@
 #define SMI2021_USB_SNDPIPE	0x00
 #define SMI2021_USB_RCVPIPE	0x80
 
-/* Hardware constants */
-#define SMI2021_HW_STATE_HEAD		0x01
-
-#define SMI2021_MAGIC_HEAD		0x0b
-
 /* General video constants */
 #define SMI2021_BYTES_PER_LINE	1440
 #define SMI2021_PAL_LINES	576
