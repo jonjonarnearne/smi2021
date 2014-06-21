@@ -215,8 +215,8 @@ int smi2021_snd_register(struct smi2021 *smi2021)
 	struct snd_pcm *pcm;
 	int rc = 0;
 
-	rc = snd_card_create(SNDRV_DEFAULT_IDX1, "smi2021 Audio", THIS_MODULE,
-				0, &card);
+	rc = snd_card_new(smi2021->dev, SNDRV_DEFAULT_IDX1, SNDRV_DEFAULT_STR1,
+			THIS_MODULE, 0, &card);
 	if (rc < 0)
 		return rc;
 
