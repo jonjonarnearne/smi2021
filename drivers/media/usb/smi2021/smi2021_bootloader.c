@@ -196,7 +196,7 @@ int smi2021_bootloader_probe(struct usb_interface *intf,
 	for (i = 0; i < ARRAY_SIZE(available_fw); i++) {
 		dev_info(&udev->dev, "Looking for: %s\n",
 			 available_fw[i].name);
-		rc = request_firmware(&firmware[firmwares + 1],
+		rc = request_firmware_direct(&firmware[firmwares + 1],
 			available_fw[i].name, &udev->dev);
 
 		if (rc == 0) {
