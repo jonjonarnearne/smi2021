@@ -894,6 +894,7 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	}
 
 	dev_info(dev, "Somagic Easy-Cap Video Grabber\n");
+
 	return 0;
 
 vdev_fail:
