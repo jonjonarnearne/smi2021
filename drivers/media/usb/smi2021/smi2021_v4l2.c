@@ -324,7 +324,6 @@ int smi2021_video_register(struct smi2021 *smi2021)
 	smi2021->vdev.tvnorms = V4L2_STD_ALL;
 	smi2021->vdev.queue = &smi2021->vb2q;
 	smi2021->vdev.lock = &smi2021->v4l2_lock;
-	set_bit(V4L2_FL_USE_FH_PRIO, &smi2021->vdev.flags);
 	video_set_drvdata(&smi2021->vdev, smi2021);
 
 	return video_register_device(&smi2021->vdev, VFL_TYPE_GRABBER, -1);
