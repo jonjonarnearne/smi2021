@@ -44,8 +44,10 @@ static int smi2021_set_mode(struct smi2021 *smi2021, u8 mode)
 	struct mode_ctrl_transfer {
 		u8 head;
 		u8 mode;
-	} *transfer_buf = kzalloc(sizeof(*transfer_buf), GFP_KERNEL);
-	if (transfer_buf == NULL)
+	} *transfer_buf;
+
+	transfer_buf = kzalloc(sizeof(*transfer_buf), GFP_KERNEL);
+	if (!transfer_buf)
 		return -ENOMEM;
 
 	transfer_buf->head = SMI2021_MODE_CTRL_HEAD;
@@ -82,8 +84,7 @@ struct smi2021_reg_ctrl_transfer {
 			u8 val;
 		} __packed i2c_data;
 		struct smi_data {
-			u8 reg_hi;
-			u8 reg_lo;
+			__be16 reg;
 			u8 val;
 		} __packed smi_data;
 		u8 reserved[8];
@@ -93,8 +94,8 @@ struct smi2021_reg_ctrl_transfer {
 static int smi2021_set_reg(struct smi2021 *smi2021, u8 i2c_addr,
 			   u16 reg, u8 val)
 {
-	int rc, pipe;
 	struct smi2021_reg_ctrl_transfer *transfer_buf;
+	int rc, pipe;
 
 	static const struct smi2021_reg_ctrl_transfer smi_data = {
 		.head = SMI2021_REG_CTRL_HEAD,
@@ -112,13 +113,13 @@ static int smi2021_set_reg(struct smi2021 *smi2021, u8 i2c_addr,
 		.data_size = sizeof(u8)
 	};
 
-	if (smi2021->udev == NULL) {
+	if (!smi2021->udev) {
 		rc = -ENODEV;
 		goto out;
 	}
 
 	transfer_buf = kzalloc(sizeof(*transfer_buf), GFP_KERNEL);
-	if (transfer_buf == NULL) {
+	if (!transfer_buf) {
 		rc = -ENOMEM;
 		goto out;
 	}
@@ -130,8 +131,7 @@ static int smi2021_set_reg(struct smi2021 *smi2021, u8 i2c_addr,
 		transfer_buf->data.i2c_data.val = val;
 	} else {
 		memcpy(transfer_buf, &smi_data, sizeof(*transfer_buf));
-		transfer_buf->data.smi_data.reg_lo = __cpu_to_le16(reg) & 0xff;
-		transfer_buf->data.smi_data.reg_hi = __cpu_to_le16(reg) >> 8;
+		transfer_buf->data.smi_data.reg = cpu_to_be16(reg);
 		transfer_buf->data.smi_data.val = val;
 	}
 
@@ -170,13 +170,13 @@ static int smi2021_get_reg(struct smi2021 *smi2021, u8 i2c_addr,
 
 	*val = 0;
 
-	if (smi2021->udev == NULL) {
+	if (!smi2021->udev) {
 		rc = -ENODEV;
 		goto out;
 	}
 
 	transfer_buf = kzalloc(sizeof(*transfer_buf), GFP_KERNEL);
-	if (transfer_buf == NULL) {
+	if (!transfer_buf) {
 		rc = -ENOMEM;
 		goto out;
 	}
@@ -198,8 +198,7 @@ static int smi2021_get_reg(struct smi2021 *smi2021, u8 i2c_addr,
 		transfer_buf->data_cntl = 0xa0;
 	} else {
 		memcpy(transfer_buf, &smi_read, sizeof(*transfer_buf));
-		transfer_buf->data.smi_data.reg_lo = __cpu_to_le16(reg) & 0xff;
-		transfer_buf->data.smi_data.reg_hi = __cpu_to_le16(reg) >> 8;
+		transfer_buf->data.smi_data.reg = cpu_to_be16(reg);
 	}
 
 	rc = usb_control_msg(smi2021->udev, pipe, SMI2021_USB_REQUEST,
@@ -264,28 +263,6 @@ static u32 smi2021_i2c_functionality(struct i2c_adapter *adap)
 	return I2C_FUNC_SMBUS_EMUL;
 }
 
-static struct i2c_algorithm smi2021_algo = {
-	.master_xfer = smi2021_i2c_xfer,
-	.functionality = smi2021_i2c_functionality,
-};
-
-/* gm7113c_init table overrides */
-static enum saa7113_r10_ofts r10_ofts = SAA7113_OFTS_VFLAG_BY_VREF;
-static bool r10_vrln = true;
-static bool r13_adlsb = true;
-
-static struct saa7115_platform_data gm7113c_data = {
-	.saa7113_r10_ofts = &r10_ofts,
-	.saa7113_r10_vrln = &r10_vrln,
-	.saa7113_r13_adlsb = &r13_adlsb,
-};
-
-static struct i2c_board_info gm7113c_info = {
-	.type = "gm7113c",
-	.addr = 0x4a,
-	.platform_data = &gm7113c_data,
-};
-
 static int smi2021_initialize(struct smi2021 *smi2021)
 {
 	int i, rc;
@@ -296,7 +273,7 @@ static int smi2021_initialize(struct smi2021 *smi2021)
 	 * My guess is that they toggle the reset pins of the
 	 * cs5350 and gm7113c chips.
 	 */
-	static const u16 init[][2] = {
+	static u8 init[][2] = {
 		{ 0x3a, 0x80 },
 		{ 0x3b, 0x00 },
 		{ 0x34, 0x01 },
@@ -372,7 +349,7 @@ static void parse_trc(struct smi2021 *smi2021, u8 trc)
 	int lines_per_field = smi2021->cur_height / 2;
 	int line = 0;
 
-	if (buf == NULL) {
+	if (!buf) {
 		if (!is_sav(trc))
 			return;
 
@@ -383,7 +360,7 @@ static void parse_trc(struct smi2021 *smi2021, u8 trc)
 			return;
 
 		buf = smi2021_get_buf(smi2021);
-		if (buf == NULL)
+		if (!buf)
 			return;
 
 		smi2021->cur_buf = buf;
@@ -431,7 +408,7 @@ static void copy_video(struct smi2021 *smi2021, u8 p)
 	unsigned int offset = 0;
 	u8 *dst;
 
-	if (buf == NULL)
+	if (!buf)
 		return;
 
 	if (buf->in_blank)
@@ -541,7 +518,9 @@ static void process_packet(struct smi2021 *smi2021, u8 *p, int size)
 		header = (u32 *)(p + i);
 		switch (*header) {
 		case cpu_to_be32(0xaaaa0000):
+			spin_lock(&smi2021->slock);
 			parse_video(smi2021, p+i+4, 0x400-4);
+			spin_unlock(&smi2021->slock);
 			break;
 		case cpu_to_be32(0xaaaa0001):
 			smi2021_audio(smi2021, p+i+4, 0x400-4);
@@ -552,8 +531,8 @@ static void process_packet(struct smi2021 *smi2021, u8 *p, int size)
 
 static void smi2021_iso_cb(struct urb *ip)
 {
-	int i, rc;
 	struct smi2021 *smi2021 = ip->context;
+	int i;
 
 	switch (ip->status) {
 	case 0:
@@ -575,13 +554,22 @@ static void smi2021_iso_cb(struct urb *ip)
 		int size = ip->iso_frame_desc[i].actual_length;
 		unsigned char *data = ip->transfer_buffer +
 				ip->iso_frame_desc[i].offset;
+
 		process_packet(smi2021, data, size);
+
+		ip->iso_frame_desc[i].status = 0;
+		ip->iso_frame_desc[i].actual_length = 0;
 	}
 
 resubmit:
-	rc = usb_submit_urb(ip, GFP_ATOMIC);
-	if (rc)
-		dev_warn(smi2021->dev, "urb re-submit failed (%d)\n", rc);
+	ip->status = 0;
+
+	if (!atomic_read(&smi2021->running))
+		return;
+
+	ip->status = usb_submit_urb(ip, GFP_ATOMIC);
+	if (ip->status)
+		dev_warn(smi2021->dev, "urb re-submit failed (%d)\n", ip->status);
 
 }
 
@@ -591,7 +579,7 @@ static struct urb *smi2021_setup_iso_transfer(struct smi2021 *smi2021)
 	int i, size = smi2021->iso_size;
 
 	ip = usb_alloc_urb(SMI2021_ISOC_PACKETS, GFP_KERNEL);
-	if (ip == NULL)
+	if (!ip)
 		return NULL;
 
 	ip->dev = smi2021->udev;
@@ -617,7 +605,8 @@ void smi2021_toggle_audio(struct smi2021 *smi2021, bool enable)
 	 * I know that setting this register enables and disables
 	 * the transfer of audio data over usb.
 	 * I have no idea about what the number 0x1d really represents.
-	 * */
+	 */
+
 	if (enable)
 		smi2021_set_reg(smi2021, 0, 0x1740, 0x1d);
 	else
@@ -630,7 +619,7 @@ int smi2021_start(struct smi2021 *smi2021)
 	u8 reg;
 	smi2021->sync_state = HSYNC;
 
-	v4l2_device_call_all(&smi2021->v4l2_dev, 0, video, s_stream, 1);
+	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_stream, 1);
 
 	/*
 	 * Enble automatic field detection on gm7113c (Bit 7)
@@ -663,7 +652,7 @@ int smi2021_start(struct smi2021 *smi2021)
 		struct urb *ip;
 
 		ip = smi2021_setup_iso_transfer(smi2021);
-		if (ip == NULL) {
+		if (!ip) {
 			rc = -ENOMEM;
 			goto start_fail;
 		}
@@ -675,6 +664,8 @@ int smi2021_start(struct smi2021 *smi2021)
 
 	/* I have no idea about what this register does with this value. */
 	smi2021_set_reg(smi2021, 0, 0x1800, 0x0d);
+
+	atomic_set(&smi2021->running, 1);
 
 	return 0;
 
@@ -688,12 +679,12 @@ start_fail:
 void smi2021_stop(struct smi2021 *smi2021)
 {
 	int i;
-	unsigned long flags;
+	atomic_set(&smi2021->running, 0);
 
 	/* Cancel running transfers */
 	for (i = 0; i < SMI2021_ISOC_TRANSFERS; i++) {
 		struct urb *ip = smi2021->isoc_urbs[i];
-		if (ip == NULL)
+		if (!ip)
 			continue;
 		usb_kill_urb(ip);
 		kfree(ip->transfer_buffer);
@@ -705,16 +696,6 @@ void smi2021_stop(struct smi2021 *smi2021)
 	smi2021_set_mode(smi2021, SMI2021_MODE_STANDBY);
 
 	smi2021_stop_audio(smi2021);
-
-	/* Return buffers to userspace */
-	spin_lock_irqsave(&smi2021->buf_lock, flags);
-	while (!list_empty(&smi2021->bufs)) {
-		struct smi2021_buf *buf = list_first_entry(&smi2021->bufs,
-						struct smi2021_buf, list);
-		vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
-		list_del(&buf->list);
-	}
-	spin_unlock_irqrestore(&smi2021->buf_lock, flags);
 
 	return;
 }
@@ -731,11 +712,10 @@ static void smi2021_release(struct v4l2_device *v4l2_dev)
 	kfree(smi2021);
 }
 
-/************************************************************************
- *									*
- *          DEVICE  -  PROBE   &   DISCONNECT				*
- *									*
- ***********************************************************************/
+
+/*
+ *	DEVICE  -  PROBE   &   DISCONNECT
+ */
 
 static const struct usb_device_id smi2021_usb_device_id_table[] = {
 	{ USB_DEVICE(VENDOR_ID, BOOTLOADER_ID)	},
@@ -777,6 +757,10 @@ static const struct smi2021_vid_input quad_input[] = {
 	},
 };
 
+const static struct i2c_algorithm smi2021_algo = {
+	.master_xfer = smi2021_i2c_xfer,
+	.functionality = smi2021_i2c_functionality,
+};
 
 static int smi2021_usb_probe(struct usb_interface *intf,
 					const struct usb_device_id *devid)
@@ -812,7 +796,7 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	}
 
 	smi2021 = kzalloc(sizeof(struct smi2021), GFP_KERNEL);
-	if (dev == NULL)
+	if (!smi2021)
 		return -ENOMEM;
 
 	smi2021->dev = dev;
@@ -826,10 +810,13 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	smi2021->cur_norm = V4L2_STD_NTSC;
 	smi2021->cur_height = SMI2021_NTSC_LINES;
 
+	spin_lock_init(&smi2021->slock);
 	spin_lock_init(&smi2021->buf_lock);
 	mutex_init(&smi2021->v4l2_lock);
 	mutex_init(&smi2021->vb2q_lock);
 	INIT_LIST_HEAD(&smi2021->bufs);
+
+	atomic_set(&smi2021->running, 0);
 
 	rc = smi2021_vb2_setup(smi2021);
 	if (rc < 0) {
@@ -872,14 +859,28 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	strlcpy(smi2021->i2c_client.name, "smi2021 internal",
 				sizeof(smi2021->i2c_client.name));
 	smi2021->i2c_client.adapter = &smi2021->i2c_adap;
+
+	/* gm7113c_init table overrides */
+	smi2021->gm7113c_overrides.r10_ofts = SAA7113_OFTS_VFLAG_BY_VREF;
+	smi2021->gm7113c_overrides.r10_vrln = true;
+	smi2021->gm7113c_overrides.r13_adlsb = true;
+
+	smi2021->gm7113c_platform_data.saa7113_r10_ofts = &smi2021->gm7113c_overrides.r10_ofts;
+	smi2021->gm7113c_platform_data.saa7113_r10_vrln = &smi2021->gm7113c_overrides.r10_vrln;
+	smi2021->gm7113c_platform_data.saa7113_r13_adlsb = &smi2021->gm7113c_overrides.r13_adlsb;
+
+	smi2021->gm7113c_info.addr = 0x4a;
+	smi2021->gm7113c_info.platform_data = &smi2021->gm7113c_platform_data;
+	strlcpy(smi2021->gm7113c_info.type, "gm7113c",
+					sizeof(smi2021->gm7113c_info.type));
+
 	smi2021->gm7113c_subdev = v4l2_i2c_new_subdev_board(&smi2021->v4l2_dev,
 							&smi2021->i2c_adap,
-							&gm7113c_info, NULL);
+							&smi2021->gm7113c_info, NULL);
 
-
-	v4l2_device_call_all(&smi2021->v4l2_dev, 0, video, s_routing,
+	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_routing,
 			smi2021->vid_inputs[smi2021->cur_input].type, 0, 0);
-	v4l2_device_call_all(&smi2021->v4l2_dev, 0, video, s_std,
+	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_std,
 			smi2021->cur_norm);
 
 	usb_set_intfdata(intf, smi2021);
@@ -918,7 +919,7 @@ static void smi2021_usb_disconnect(struct usb_interface *intf)
 	struct usb_device *udev = interface_to_usbdev(intf);
 
 	if (udev->descriptor.idProduct == BOOTLOADER_ID)
-		return smi2021_bootloader_disconnect(intf);
+		return;
 
 	smi2021 = usb_get_intfdata(intf);
 	smi2021_snd_unregister(smi2021);

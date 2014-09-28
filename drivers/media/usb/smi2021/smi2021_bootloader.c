@@ -50,32 +50,8 @@
 static unsigned int firmware_version;
 module_param(firmware_version, int, 0644);
 MODULE_PARM_DESC(firmware_version,
-			"Firmware version to be uploaded to device\n"
-			"if there are more than one firmware present");
-
-struct smi2021_firmware {
-	int		id;
-	const char	*name;
-	int		found;
-};
-
-struct smi2021_firmware available_fw[] = {
-	{
-		.id = 0x3c,
-		.name = SMI2021_3C_FIRMWARE,
-	},
-	{
-		.id = 0x3e,
-		.name = SMI2021_3E_FIRMWARE,
-	},
-	{
-		.id = 0x3f,
-		.name = SMI2021_3F_FIRMWARE,
-	}
-};
-
-static const struct firmware *firmware[ARRAY_SIZE(available_fw)];
-static int firmwares = -1;
+			"Select what firmware to upload\n"
+			"accepted values: 0x3c, 0x3e, 0x3f");
 
 static int smi2021_load_firmware(struct usb_device *udev,
 					const struct firmware *firmware)
@@ -85,9 +61,9 @@ static int smi2021_load_firmware(struct usb_device *udev,
 	u8 *chunk;
 
 	size = FIRMWARE_CHUNK_SIZE + FIRMWARE_HEADER_SIZE;
-	chunk = kzalloc(size, GFP_KERNEL);
 
-	if (chunk == NULL) {
+	chunk = kzalloc(size, GFP_KERNEL);
+	if (!chunk) {
 		dev_err(&udev->dev,
 			"could not allocate space for firmware chunk\n");
 		rc = -ENOMEM;
@@ -95,13 +71,13 @@ static int smi2021_load_firmware(struct usb_device *udev,
 	}
 
 	hw_state = kzalloc(sizeof(*hw_state), GFP_KERNEL);
-	if (hw_state == NULL) {
+	if (!hw_state) {
 		dev_err(&udev->dev, "could not allocate space for usb data\n");
 		rc = -ENOMEM;
 		goto free_out;
 	}
 
-	if (firmware == NULL) {
+	if (!firmware) {
 		dev_err(&udev->dev, "firmware is NULL\n");
 		rc = -ENODEV;
 		goto free_out;
@@ -168,87 +144,76 @@ end_out:
 	return rc;
 }
 
-static int smi2021_choose_firmware(struct usb_device *udev)
-{
-	int i, found, id;
-	for (i = 0; i < ARRAY_SIZE(available_fw); i++) {
-		found = available_fw[i].found;
-		id = available_fw[i].id;
-		if (firmware_version == id && found >= 0) {
-			dev_info(&udev->dev, "uploading firmware for 0x%x\n",
-					id);
-			return smi2021_load_firmware(udev, firmware[found]);
-		}
-	}
 
-	dev_info(&udev->dev,
-	"could not decide what firmware to upload, user action required\n");
-	return 0;
-}
+/*
+ * There are atleast three different hardware versions of the smi2021 devices
+ * that require different firmwares.
+ * Before the firmware is loaded, they all report the same usb product id,
+ * so I don't know of any way to tell what device the user just plugged.
+ * If we only find one smi2021 firmware,
+ * we can probably asume it's correct for the device.
+ *
+ * Users with multiple different firmwares/devices
+ * will have to specify the version in /sysfs before plugging in each device.
+ */
 
 int smi2021_bootloader_probe(struct usb_interface *intf,
 					const struct usb_device_id *devid)
 {
 	struct usb_device *udev = interface_to_usbdev(intf);
+
+	const struct firmware *firmware;
 	int rc, i;
 
-	/* Check what firmwares are available in the system */
-	for (i = 0; i < ARRAY_SIZE(available_fw); i++) {
-		dev_info(&udev->dev, "Looking for: %s\n",
-			 available_fw[i].name);
-		rc = request_firmware_direct(&firmware[firmwares + 1],
-			available_fw[i].name, &udev->dev);
+	struct smi2021_versions {
+		unsigned int	id;
+		const char	*name;
+	} static const hw_versions[3] = {
+		{
+			.id = 0x3f,
+			.name = SMI2021_3F_FIRMWARE,
+		},
+		{
+			.id = 0x3e,
+			.name = SMI2021_3E_FIRMWARE,
+		},
+		{
+			.id = 0x3c,
+			.name = SMI2021_3C_FIRMWARE,
+		}
+	};
+
+	for (i = 0; i < ARRAY_SIZE(hw_versions); i++) {
+		if (firmware_version && firmware_version != hw_versions[i].id)
+			continue;
+
+		dev_info(&udev->dev, "Looking for: %s\n", hw_versions[i].name);
+
+		rc = request_firmware_direct(&firmware,	hw_versions[i].name,
+								&udev->dev);
 
 		if (rc == 0) {
-			firmwares++;
-			available_fw[i].found = firmwares;
 			dev_info(&udev->dev, "Found firmware for 0x00%x\n",
-				available_fw[i].id);
-		} else if (rc == -ENOENT) {
-			available_fw[i].found = -1;
-		} else {
-			dev_err(&udev->dev,
-				"request_firmware failed with: %d\n", rc);
-			goto err_out;
+							hw_versions[i].id);
+			goto load_fw;
 		}
 	}
-
-	if (firmwares < 0) {
+	if (firmware_version)
 		dev_err(&udev->dev,
-			"could not find any firmware for this device\n");
-		goto no_dev;
-	} else if (firmwares == 0) {
-		rc = smi2021_load_firmware(udev, firmware[0]);
-		if (rc < 0)
-			goto err_out;
-	} else {
-		smi2021_choose_firmware(udev);
-	}
-
-	return 0;
-
-no_dev:
-	rc = -ENODEV;
-err_out:
+		"the specified firmware for this device could not be loaded\n");
+	else
+		dev_err(&udev->dev,
+			"could not load any firmware for this device\n");
 	return rc;
-}
 
-void smi2021_bootloader_disconnect(struct usb_interface *intf)
-{
-	struct usb_device *udev = interface_to_usbdev(intf);
-	int i;
+load_fw:
+	rc = smi2021_load_firmware(udev, firmware);
 
-	for (i = 0; i < ARRAY_SIZE(available_fw); i++) {
-		if (available_fw[i].found >= 0) {
-			dev_info(&udev->dev, "Releasing firmware for 0x00%x\n",
-							available_fw[i].id);
-			release_firmware(firmware[available_fw[i].found]);
-			firmware[available_fw[i].found] = NULL;
-			available_fw[i].found = -1;
-		}
-	}
-	firmwares = -1;
+	if (rc < 0)
+		dev_err(&udev->dev, "firmware upload failed\n");
 
+	release_firmware(firmware);
+	return rc;
 }
 
 MODULE_FIRMWARE(SMI2021_3C_FIRMWARE);

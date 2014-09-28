@@ -268,6 +268,7 @@ void smi2021_stop_audio(struct smi2021 *smi2021)
 	 *
 	 * Is there a better way to do this?
 	 */
+/*
 	if (smi2021->pcm_substream && smi2021->pcm_substream->runtime) {
 		struct snd_pcm_runtime *runtime;
 
@@ -277,6 +278,7 @@ void smi2021_stop_audio(struct smi2021 *smi2021)
 			wake_up(&runtime->sleep);
 		}
 	}
+*/
 }
 
 void smi2021_audio(struct smi2021 *smi2021, u8 *data, int len)
