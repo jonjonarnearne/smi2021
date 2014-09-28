@@ -129,13 +129,25 @@ enum smi2021_sync {
 	TRC
 };
 
+struct gm7113c_init_overrides {
+	enum saa7113_r10_ofts		r10_ofts;
+	bool 				r10_vrln;
+	bool				r13_adlsb;
+};
+
 struct smi2021 {
 	struct device			*dev;
 	struct usb_device		*udev;
 	struct i2c_adapter		i2c_adap;
 	struct i2c_client		i2c_client;
 	struct v4l2_ctrl_handler	ctrl_handler;
+
+	/* i2c subdevice setup */
+	struct i2c_board_info		gm7113c_info;
+	struct gm7113c_init_overrides	gm7113c_overrides;
+	struct saa7115_platform_data	gm7113c_platform_data;
 	struct v4l2_subdev		*gm7113c_subdev;
+
 	struct v4l2_device		v4l2_dev;
 	struct video_device		vdev;
 	struct vb2_queue		vb2q;
@@ -146,6 +158,9 @@ struct smi2021 {
 	spinlock_t			buf_lock;
 	struct list_head		bufs;
 	struct smi2021_buf		*cur_buf;
+
+	spinlock_t			slock;
+	atomic_t			running;
 
 	int				sequence;
 
