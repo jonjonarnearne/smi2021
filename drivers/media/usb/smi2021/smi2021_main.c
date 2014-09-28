@@ -691,8 +691,11 @@ void smi2021_stop(struct smi2021 *smi2021)
 		usb_free_urb(ip);
 		smi2021->isoc_urbs[i] = NULL;
 	}
+	
+	/* This could get called after the device is yanked */
+	if (smi2021->udev)
+		usb_set_interface(smi2021->udev, 0, 0);
 
-	usb_set_interface(smi2021->udev, 0, 0);
 	smi2021_set_mode(smi2021, SMI2021_MODE_STANDBY);
 
 	smi2021_stop_audio(smi2021);

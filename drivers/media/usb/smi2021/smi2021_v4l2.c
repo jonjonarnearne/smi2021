@@ -239,7 +239,7 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 	unsigned long flags;
 	int rc;
 
-	if (smi2021->udev == NULL)
+	if (!smi2021->udev)
 		goto error;
 
 	rc = smi2021_start(smi2021);
