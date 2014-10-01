@@ -50,6 +50,11 @@ static int smi2021_set_mode(struct smi2021 *smi2021, u8 mode)
 	if (!transfer_buf)
 		return -ENOMEM;
 
+	if (!smi2021->udev) {
+		rc = -ENODEV;
+		goto out;
+	}
+
 	transfer_buf->head = SMI2021_MODE_CTRL_HEAD;
 	transfer_buf->mode = mode;
 
@@ -59,8 +64,8 @@ static int smi2021_set_mode(struct smi2021 *smi2021, u8 mode)
 			transfer_buf->head, SMI2021_USB_INDEX,
 			transfer_buf, sizeof(*transfer_buf), 1000);
 
+out:
 	kfree(transfer_buf);
-
 	return rc;
 }
 
