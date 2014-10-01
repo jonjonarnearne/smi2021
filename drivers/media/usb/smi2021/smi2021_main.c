@@ -684,6 +684,7 @@ start_fail:
 void smi2021_stop(struct smi2021 *smi2021)
 {
 	int i;
+	unsigned long flags;
 	atomic_set(&smi2021->running, 0);
 
 	/* Cancel running transfers */
@@ -696,6 +697,24 @@ void smi2021_stop(struct smi2021 *smi2021)
 		usb_free_urb(ip);
 		smi2021->isoc_urbs[i] = NULL;
 	}
+
+	/* Return buffers to userspace */
+	spin_lock_irqsave(&smi2021->buf_lock, flags);
+	while (!list_empty(&smi2021->bufs)) {
+		struct smi2021_buf *buf = list_first_entry(&smi2021->bufs,
+						struct smi2021_buf, list);
+		vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
+		list_del(&buf->list);
+	}
+	spin_unlock_irqrestore(&smi2021->buf_lock, flags);
+
+	/* And release the current active buffer (if any) */
+	spin_lock_irqsave(&smi2021->slock, flags);
+	if (smi2021->cur_buf) {
+		vb2_buffer_done(&smi2021->cur_buf->vb, VB2_BUF_STATE_ERROR);
+		smi2021->cur_buf = NULL;
+	}
+	spin_unlock_irqrestore(&smi2021->slock, flags);
 	
 	/* This could get called after the device is yanked */
 	if (smi2021->udev)
@@ -716,6 +735,7 @@ static void smi2021_release(struct v4l2_device *v4l2_dev)
 
 	v4l2_ctrl_handler_free(&smi2021->ctrl_handler);
 	v4l2_device_unregister(&smi2021->v4l2_dev);
+
 	vb2_queue_release(&smi2021->vb2q);
 	kfree(smi2021);
 }
@@ -852,7 +872,7 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	/* i2c adapter */
 	strlcpy(smi2021->i2c_adap.name, "smi2021",
 				sizeof(smi2021->i2c_adap.name));
-	smi2021->i2c_adap.dev.parent = smi2021->dev;
+	smi2021->i2c_adap.dev.parent = &smi2021->udev->dev;
 	smi2021->i2c_adap.owner = THIS_MODULE;
 	smi2021->i2c_adap.algo = &smi2021_algo;
 	smi2021->i2c_adap.algo_data = smi2021;
@@ -930,6 +950,8 @@ static void smi2021_usb_disconnect(struct usb_interface *intf)
 		return;
 
 	smi2021 = usb_get_intfdata(intf);
+
+	smi2021_stop(smi2021);
 	smi2021_snd_unregister(smi2021);
 
 	mutex_lock(&smi2021->vb2q_lock);
@@ -938,6 +960,7 @@ static void smi2021_usb_disconnect(struct usb_interface *intf)
 	usb_set_intfdata(intf, NULL);
 	video_unregister_device(&smi2021->vdev);
 	v4l2_device_disconnect(&smi2021->v4l2_dev);
+
 	usb_put_dev(smi2021->udev);
 	smi2021->udev = NULL;
 
