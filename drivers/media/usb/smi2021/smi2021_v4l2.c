@@ -265,27 +265,8 @@ error:
 static void stop_streaming(struct vb2_queue *vq)
 {
 	struct smi2021 *smi2021 = vb2_get_drv_priv(vq);
-	unsigned long flags;
 
 	smi2021_stop(smi2021);
-
-	/* Return buffers to userspace */
-	spin_lock_irqsave(&smi2021->buf_lock, flags);
-	while (!list_empty(&smi2021->bufs)) {
-		struct smi2021_buf *buf = list_first_entry(&smi2021->bufs,
-						struct smi2021_buf, list);
-		vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
-		list_del(&buf->list);
-	}
-	spin_unlock_irqrestore(&smi2021->buf_lock, flags);
-
-	/* And release the current active buffer (if any) */
-	spin_lock(&smi2021->slock);
-	if (smi2021->cur_buf) {
-		vb2_buffer_done(&smi2021->cur_buf->vb, VB2_BUF_STATE_ERROR);
-		smi2021->cur_buf = NULL;
-	}
-	spin_unlock(&smi2021->slock);
 
 	return;
 }
