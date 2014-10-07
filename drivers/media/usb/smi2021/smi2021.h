@@ -135,6 +135,21 @@ struct gm7113c_init_overrides {
 	bool				r13_adlsb;
 };
 
+struct smi2021_isoc_ctl {
+	/* max packet size of isoc transaction */
+	int max_pkt_size;
+
+	/* number of allocated urbs */
+	int num_bufs;
+
+	/* urb for isoc transfers */
+	struct urb **urb;
+
+	/* transfer buffers for isoc transfer */
+	char **transfer_buffer;
+
+};
+
 struct smi2021 {
 	struct device			*dev;
 	struct usb_device		*udev;
@@ -150,17 +165,16 @@ struct smi2021 {
 
 	struct v4l2_device		v4l2_dev;
 	struct video_device		vdev;
-	struct vb2_queue		vb2q;
+	struct vb2_queue		vb_vidq;
 	struct mutex			v4l2_lock;
-	struct mutex			vb2q_lock;
+	struct mutex			vb_queue_lock;
+
+	struct smi2021_isoc_ctl		isoc_ctl;
 
 	/* List of videobuf2 buffers protected by a lock. */
 	spinlock_t			buf_lock;
-	struct list_head		bufs;
+	struct list_head		avail_bufs;
 	struct smi2021_buf		*cur_buf;
-
-	spinlock_t			slock;
-	atomic_t			running;
 
 	int				sequence;
 
@@ -180,12 +194,11 @@ struct smi2021 {
 	atomic_t			adev_capturing;
 
 	/* Device settings */
-	unsigned int		vid_input_count;
+	unsigned int			vid_input_count;
 	const struct smi2021_vid_input	*vid_inputs;
 	int				cur_input;
 
 	int				iso_size;
-	struct urb			*isoc_urbs[SMI2021_ISOC_TRANSFERS];
 };
 
 /* Provided by smi2021_bootloader.c */
@@ -196,11 +209,12 @@ void smi2021_bootloader_disconnect(struct usb_interface *intf);
 /* Provided by smi2021_main.c */
 void smi2021_toggle_audio(struct smi2021 *smi2021, bool enable);
 int smi2021_start(struct smi2021 *smi2021);
-void smi2021_stop(struct smi2021 *smi2021);
+int smi2021_stop(struct smi2021 *smi2021);
 
 /* Provided by smi2021_v4l2.c */
 int smi2021_vb2_setup(struct smi2021 *smi2021);
 int smi2021_video_register(struct smi2021 *smi2021);
+void smi2021_clear_queue(struct smi2021 *smi2021);
 
 /* Provided by smi2021_audio.c */
 int smi2021_snd_register(struct smi2021 *smi2021);

@@ -303,14 +303,14 @@ static struct smi2021_buf *smi2021_get_buf(struct smi2021 *smi2021)
 	unsigned long flags;
 	struct smi2021_buf *buf = NULL;
 
+	WARN_ON(smi2021->cur_buf);
+
 	spin_lock_irqsave(&smi2021->buf_lock, flags);
-	if (list_empty(&smi2021->bufs)) {
-		/* No free buffers, userspace likely to slow! */
-		spin_unlock_irqrestore(&smi2021->buf_lock, flags);
-		return NULL;
+	if (!list_empty(&smi2021->avail_bufs)) {
+		buf = list_first_entry(&smi2021->avail_bufs,
+						struct smi2021_buf, list);
+		list_del(&buf->list);
 	}
-	buf = list_first_entry(&smi2021->bufs, struct smi2021_buf, list);
-	list_del(&buf->list);
 	spin_unlock_irqrestore(&smi2021->buf_lock, flags);
 
 	return buf;
@@ -523,9 +523,7 @@ static void process_packet(struct smi2021 *smi2021, u8 *p, int size)
 		header = (u32 *)(p + i);
 		switch (*header) {
 		case cpu_to_be32(0xaaaa0000):
-			spin_lock(&smi2021->slock);
 			parse_video(smi2021, p+i+4, 0x400-4);
-			spin_unlock(&smi2021->slock);
 			break;
 		case cpu_to_be32(0xaaaa0001):
 			smi2021_audio(smi2021, p+i+4, 0x400-4);
@@ -552,7 +550,7 @@ static void smi2021_iso_cb(struct urb *ip)
 	/* Unknown error, retry */
 	default:
 		dev_warn(smi2021->dev, "urb error! status %d\n", ip->status);
-		goto resubmit;
+		return;
 	}
 
 	for (i = 0; i < ip->number_of_packets; i++) {
@@ -566,42 +564,147 @@ static void smi2021_iso_cb(struct urb *ip)
 		ip->iso_frame_desc[i].actual_length = 0;
 	}
 
-resubmit:
 	ip->status = 0;
-
-	if (!atomic_read(&smi2021->running))
-		return;
-
 	ip->status = usb_submit_urb(ip, GFP_ATOMIC);
 	if (ip->status)
 		dev_warn(smi2021->dev, "urb re-submit failed (%d)\n", ip->status);
 
 }
 
-static struct urb *smi2021_setup_iso_transfer(struct smi2021 *smi2021)
+static void smi2021_cancel_isoc(struct smi2021 *smi2021)
 {
-	struct urb *ip;
-	int i, size = smi2021->iso_size;
+	int i, num_bufs = smi2021->isoc_ctl.num_bufs;
 
-	ip = usb_alloc_urb(SMI2021_ISOC_PACKETS, GFP_KERNEL);
-	if (!ip)
-		return NULL;
+	dev_notice(smi2021->dev, "killing %d urbs...\n", num_bufs);
 
-	ip->dev = smi2021->udev;
-	ip->context = smi2021;
-	ip->pipe = usb_rcvisocpipe(smi2021->udev, SMI2021_ISOC_EP);
-	ip->interval = 1;
-	ip->transfer_flags = URB_ISO_ASAP;
-	ip->transfer_buffer = kzalloc(SMI2021_ISOC_PACKETS * size, GFP_KERNEL);
-	ip->complete = smi2021_iso_cb;
-	ip->number_of_packets = SMI2021_ISOC_PACKETS;
-	ip->transfer_buffer_length = SMI2021_ISOC_PACKETS * size;
-	for (i = 0; i < SMI2021_ISOC_PACKETS; i++) {
-		ip->iso_frame_desc[i].offset = size * i;
-		ip->iso_frame_desc[i].length = size;
+	for (i = 0; i < num_bufs; i++) {
+		/*
+		 * To kill urbs, we can't be in atomic context.
+		 * We don't care for NULL pointers since
+		 * usb_kill_urb allows it.
+		 */
+		usb_kill_urb(smi2021->isoc_ctl.urb[i]);
 	}
 
-	return ip;
+	dev_notice(smi2021->dev, "all urbs killed\n");
+}
+
+/*
+ * Releases all urb and transfer buffers.
+ * All associated urbs must be killed before calling this function.
+ */
+static void smi2021_free_isoc(struct smi2021 *smi2021)
+{
+	struct urb *urb;
+	int i, num_bufs = smi2021->isoc_ctl.num_bufs;
+
+	dev_info(smi2021->dev, "freeing %d urb buffers...\n", num_bufs);
+
+	for (i = 0; i < num_bufs; i++) {
+		urb = smi2021->isoc_ctl.urb[i];
+
+		if (unlikely(!urb))
+			continue;
+		if (smi2021->isoc_ctl.transfer_buffer[i])
+			kfree(smi2021->isoc_ctl.transfer_buffer[i]);
+		usb_free_urb(urb);
+		smi2021->isoc_ctl.urb[i] = NULL;
+		smi2021->isoc_ctl.transfer_buffer[i] = NULL;
+	}
+
+	kfree(smi2021->isoc_ctl.urb);
+	kfree(smi2021->isoc_ctl.transfer_buffer);
+
+	smi2021->isoc_ctl.urb = NULL;
+	smi2021->isoc_ctl.transfer_buffer = NULL;
+	smi2021->isoc_ctl.num_bufs = 0;
+
+	dev_info(smi2021->dev, "all urb buffers freed\n");
+}
+
+static void smi2021_uninit_isoc(struct smi2021 *smi2021)
+{
+	smi2021_cancel_isoc(smi2021);
+	smi2021_free_isoc(smi2021);
+}
+
+static int smi2021_alloc_isoc(struct smi2021 *smi2021)
+{
+	struct urb *urb;
+	int i, j, sb_size, max_packets, num_bufs;
+
+	/*
+	 * It may be necessary to release isoc here,
+	 * since isocs are only released on disconnect.
+	 */
+	if (smi2021->isoc_ctl.num_bufs)
+		smi2021_uninit_isoc(smi2021);
+
+	dev_info(smi2021->dev, "allocating urbs...\n");
+
+	num_bufs = SMI2021_ISOC_TRANSFERS;
+	max_packets = SMI2021_ISOC_PACKETS;
+	sb_size = max_packets * smi2021->iso_size;
+
+	smi2021->cur_buf = NULL;
+	smi2021->isoc_ctl.max_pkt_size = smi2021->iso_size;
+	smi2021->isoc_ctl.urb = kzalloc(sizeof(void *)*num_bufs, GFP_KERNEL);
+	if (!smi2021->isoc_ctl.urb) {
+		dev_err(smi2021->dev, "out of memory for urb array");
+		return -ENOMEM;
+	}
+
+	smi2021->isoc_ctl.transfer_buffer = kzalloc(sizeof(void *)*num_bufs,
+								GFP_KERNEL);
+	if (!smi2021->isoc_ctl.transfer_buffer) {
+		dev_err(smi2021->dev, "out of memory for usb transfers");
+		kfree(smi2021->isoc_ctl.urb);
+		return -ENOMEM;
+	}
+
+	/* allocate urbs and transfer buffers */
+	for (i = 0; i < num_bufs; i++) {
+		urb = usb_alloc_urb(max_packets, GFP_KERNEL);
+		if (!urb) {
+			dev_err(smi2021->dev, "cannot allocate urb[%d]\n", i);
+			goto err_out;
+		}
+		smi2021->isoc_ctl.urb[i] = urb;
+		smi2021->isoc_ctl.transfer_buffer[i] = kzalloc(sb_size, GFP_KERNEL);
+		if (!smi2021->isoc_ctl.transfer_buffer[i]) {
+			dev_err(smi2021->dev,
+				"cannot alloc %d bytes for tx[%d] buffer\n",
+								sb_size, i);
+			goto err_out;
+		}
+
+		urb->dev = smi2021->udev;
+		urb->pipe = usb_rcvisocpipe(smi2021->udev, SMI2021_ISOC_EP);
+		urb->transfer_buffer = smi2021->isoc_ctl.transfer_buffer[i];
+		urb->transfer_buffer_length = sb_size;
+		urb->complete = smi2021_iso_cb;
+		urb->context = smi2021;
+		urb->interval = 1;
+		urb->start_frame = 0;
+		urb->number_of_packets = max_packets;
+		urb->transfer_flags = URB_ISO_ASAP;
+		for (j = 0; j < max_packets; j++) {
+			urb->iso_frame_desc[j].offset = smi2021->iso_size * j;
+			urb->iso_frame_desc[j].length = smi2021->iso_size;
+		}
+	}
+
+	dev_info(smi2021->dev, "%d urbs of %d bytes, allocated\n", num_bufs,
+								sb_size);
+	smi2021->isoc_ctl.num_bufs = num_bufs;
+
+	return 0;
+
+err_out:
+	/* Save the allocataed buffers so far, so we can properly free them */
+	smi2021->isoc_ctl.num_bufs = i+1;
+	smi2021_free_isoc(smi2021);
+	return -ENOMEM;
 }
 
 void smi2021_toggle_audio(struct smi2021 *smi2021, bool enable)
@@ -623,6 +726,13 @@ int smi2021_start(struct smi2021 *smi2021)
 	int i, rc;
 	u8 reg;
 	smi2021->sync_state = HSYNC;
+
+	/* Check device presence */
+	if (!smi2021->udev)
+		return -ENODEV;
+
+	if (mutex_lock_interruptible(&smi2021->v4l2_lock))
+		return -ERESTARTSYS;
 
 	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_stream, 1);
 
@@ -653,90 +763,88 @@ int smi2021_start(struct smi2021 *smi2021)
 
 	smi2021_toggle_audio(smi2021, false);
 
-	for (i = 0; i < SMI2021_ISOC_TRANSFERS; i++) {
-		struct urb *ip;
-
-		ip = smi2021_setup_iso_transfer(smi2021);
-		if (!ip) {
-			rc = -ENOMEM;
-			goto start_fail;
-		}
-		smi2021->isoc_urbs[i] = ip;
-		rc = usb_submit_urb(ip, GFP_KERNEL);
+	if (!smi2021->isoc_ctl.num_bufs) {
+		rc = smi2021_alloc_isoc(smi2021);
 		if (rc < 0)
-			goto start_fail;
+			goto err_stop_hw;
+	}
+
+	for (i = 0; i < smi2021->isoc_ctl.num_bufs; i++) {
+		rc = usb_submit_urb(smi2021->isoc_ctl.urb[i], GFP_KERNEL);
+		if (rc) {
+			dev_err(smi2021->dev, "cannot submit urb[%d] (%d)\n",
+									i, rc);
+			goto err_uninit;
+		}
 	}
 
 	/* I have no idea about what this register does with this value. */
 	smi2021_set_reg(smi2021, 0, 0x1800, 0x0d);
 
-	atomic_set(&smi2021->running, 1);
+	mutex_unlock(&smi2021->v4l2_lock);
 
 	return 0;
 
+err_uninit:
+	smi2021_uninit_isoc(smi2021);
+err_stop_hw:
+	usb_set_interface(smi2021->udev, 0, 0);
+	smi2021_clear_queue(smi2021);
+
 start_fail:
-	smi2021_stop(smi2021);
+	mutex_unlock(&smi2021->v4l2_lock);
 
 	return rc;
-
 }
 
-void smi2021_stop(struct smi2021 *smi2021)
+/* Must be called with v4l2_lock held */
+static void smi2021_stop_hw(struct smi2021 *smi2021)
 {
-	int i;
-	unsigned long flags;
-	atomic_set(&smi2021->running, 0);
+	if (!smi2021->udev)
+		return;
 
-	/* Cancel running transfers */
-	for (i = 0; i < SMI2021_ISOC_TRANSFERS; i++) {
-		struct urb *ip = smi2021->isoc_urbs[i];
-		if (!ip)
-			continue;
-		usb_kill_urb(ip);
-		kfree(ip->transfer_buffer);
-		usb_free_urb(ip);
-		smi2021->isoc_urbs[i] = NULL;
-	}
-
-	/* Return buffers to userspace */
-	spin_lock_irqsave(&smi2021->buf_lock, flags);
-	while (!list_empty(&smi2021->bufs)) {
-		struct smi2021_buf *buf = list_first_entry(&smi2021->bufs,
-						struct smi2021_buf, list);
-		vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
-		list_del(&buf->list);
-	}
-	spin_unlock_irqrestore(&smi2021->buf_lock, flags);
-
-	/* And release the current active buffer (if any) */
-	spin_lock_irqsave(&smi2021->slock, flags);
-	if (smi2021->cur_buf) {
-		vb2_buffer_done(&smi2021->cur_buf->vb, VB2_BUF_STATE_ERROR);
-		smi2021->cur_buf = NULL;
-	}
-	spin_unlock_irqrestore(&smi2021->slock, flags);
-	
-	/* This could get called after the device is yanked */
-	if (smi2021->udev)
-		usb_set_interface(smi2021->udev, 0, 0);
+	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_stream, 1);
 
 	smi2021_set_mode(smi2021, SMI2021_MODE_STANDBY);
 
-	smi2021_stop_audio(smi2021);
+	usb_set_interface(smi2021->udev, 0, 0);
+}
 
-	return;
+int smi2021_stop(struct smi2021 *smi2021)
+{
+	if (mutex_lock_interruptible(&smi2021->v4l2_lock))
+		return -ERESTARTSYS;
+
+	/* TODO: No need to have these as two functions.
+	 * 	 Exept if I should copy the reason from the skt1160 driver.
+	 */
+	smi2021_cancel_isoc(smi2021);
+	smi2021_free_isoc(smi2021);
+
+	smi2021_stop_hw(smi2021);
+	
+	smi2021_clear_queue(smi2021);
+
+	dev_info(smi2021->dev, "streaming stopped\n");
+
+	mutex_unlock(&smi2021->v4l2_lock);
+
+	return 0;
 }
 
 static void smi2021_release(struct v4l2_device *v4l2_dev)
 {
 	struct smi2021 *smi2021 = container_of(v4l2_dev, struct smi2021,
-								v4l2_dev);
-	i2c_del_adapter(&smi2021->i2c_adap);
+						v4l2_dev);
 
+	dev_info(smi2021->dev, "releasing all resource\n");
+
+	i2c_del_adapter(&smi2021->i2c_adap);
 	v4l2_ctrl_handler_free(&smi2021->ctrl_handler);
+
 	v4l2_device_unregister(&smi2021->v4l2_dev);
 
-	vb2_queue_release(&smi2021->vb2q);
+/*	vb2_queue_release(&smi2021->vb_vidq); */
 	kfree(smi2021);
 }
 
@@ -790,6 +898,16 @@ const static struct i2c_algorithm smi2021_algo = {
 	.functionality = smi2021_i2c_functionality,
 };
 
+static struct i2c_adapter adap_template = {
+	.owner = THIS_MODULE,
+	.name = "smi2021",
+	.algo = &smi2021_algo,
+};
+
+static struct i2c_client client_template = {
+	.name = "smi2021 internal",
+};
+
 static int smi2021_usb_probe(struct usb_interface *intf,
 					const struct usb_device_id *devid)
 {
@@ -835,27 +953,21 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	smi2021->iso_size = size;
 
 	/* videobuf2 struct and locks */
-	smi2021->cur_norm = V4L2_STD_NTSC;
-	smi2021->cur_height = SMI2021_NTSC_LINES;
 
-	spin_lock_init(&smi2021->slock);
 	spin_lock_init(&smi2021->buf_lock);
 	mutex_init(&smi2021->v4l2_lock);
-	mutex_init(&smi2021->vb2q_lock);
-	INIT_LIST_HEAD(&smi2021->bufs);
-
-	atomic_set(&smi2021->running, 0);
+	mutex_init(&smi2021->vb_queue_lock);
 
 	rc = smi2021_vb2_setup(smi2021);
 	if (rc < 0) {
-		dev_warn(dev, "Could not initialize videobuf2 queue\n");
-		goto smi2021_fail;
+		dev_err(dev, "Could not initialize videobuf2 queue\n");
+		goto free_err;
 	}
 
 	rc = v4l2_ctrl_handler_init(&smi2021->ctrl_handler, 0);
 	if (rc < 0) {
-		dev_warn(dev, "Could not initialize v4l2 ctrl handler\n");
-		goto ctrl_fail;
+		dev_err(dev, "Could not initialize v4l2 ctrl handler\n");
+		goto free_err;
 	}
 
 	/* v4l2 struct */
@@ -864,28 +976,28 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	rc = v4l2_device_register(dev, &smi2021->v4l2_dev);
 	if (rc < 0) {
 		dev_warn(dev, "Could not register v4l2 device\n");
-		goto v4l2_fail;
+		goto free_ctrl;
 	}
 
 	smi2021_initialize(smi2021);
 
 	/* i2c adapter */
+	smi2021->i2c_adap = adap_template;
+	smi2021->i2c_adap.dev.parent = smi2021->dev;
 	strlcpy(smi2021->i2c_adap.name, "smi2021",
 				sizeof(smi2021->i2c_adap.name));
-	smi2021->i2c_adap.dev.parent = &smi2021->udev->dev;
-	smi2021->i2c_adap.owner = THIS_MODULE;
-	smi2021->i2c_adap.algo = &smi2021_algo;
 	smi2021->i2c_adap.algo_data = smi2021;
+
 	i2c_set_adapdata(&smi2021->i2c_adap, &smi2021->v4l2_dev);
+
 	rc = i2c_add_adapter(&smi2021->i2c_adap);
 	if (rc < 0) {
 		dev_warn(dev, "Could not add i2c adapter\n");
-		goto i2c_fail;
+		goto unreg_v4l2;
 	}
 
 	/* i2c client */
-	strlcpy(smi2021->i2c_client.name, "smi2021 internal",
-				sizeof(smi2021->i2c_client.name));
+	smi2021->i2c_client = client_template;
 	smi2021->i2c_client.adapter = &smi2021->i2c_adap;
 
 	/* gm7113c_init table overrides */
@@ -919,22 +1031,20 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	rc = smi2021_video_register(smi2021);
 	if (rc < 0) {
 		dev_warn(dev, "Could not register video device\n");
-		goto vdev_fail;
+		goto unreg_i2c;
 	}
 
 	dev_info(dev, "Somagic Easy-Cap Video Grabber\n");
 
 	return 0;
 
-vdev_fail:
+unreg_i2c:
 	i2c_del_adapter(&smi2021->i2c_adap);
-i2c_fail:
+unreg_v4l2:
 	v4l2_device_unregister(&smi2021->v4l2_dev);
-v4l2_fail:
+free_ctrl:
 	v4l2_ctrl_handler_free(&smi2021->ctrl_handler);
-ctrl_fail:
-	vb2_queue_release(&smi2021->vb2q);
-smi2021_fail:
+free_err:
 	kfree(smi2021);
 
 	return rc;
@@ -950,23 +1060,29 @@ static void smi2021_usb_disconnect(struct usb_interface *intf)
 		return;
 
 	smi2021 = usb_get_intfdata(intf);
+	usb_set_intfdata(intf, NULL);
 
-	smi2021_stop(smi2021);
-	smi2021_snd_unregister(smi2021);
-
-	mutex_lock(&smi2021->vb2q_lock);
+	mutex_lock(&smi2021->vb_queue_lock);
 	mutex_lock(&smi2021->v4l2_lock);
 
-	usb_set_intfdata(intf, NULL);
+	smi2021_uninit_isoc(smi2021);
+
+	smi2021_snd_unregister(smi2021);
+
+	smi2021_clear_queue(smi2021);
+
 	video_unregister_device(&smi2021->vdev);
 	v4l2_device_disconnect(&smi2021->v4l2_dev);
 
-	usb_put_dev(smi2021->udev);
 	smi2021->udev = NULL;
 
 	mutex_unlock(&smi2021->v4l2_lock);
-	mutex_unlock(&smi2021->vb2q_lock);
+	mutex_unlock(&smi2021->vb_queue_lock);
 
+	/*
+	 * This calls smi2021_release if it's the last reference.
+	 * otherwise, release is postponed until there are no users left.
+	 */
 	v4l2_device_put(&smi2021->v4l2_dev);
 }
 
