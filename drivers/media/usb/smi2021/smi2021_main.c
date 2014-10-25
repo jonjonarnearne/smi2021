@@ -815,8 +815,10 @@ int smi2021_stop(struct smi2021 *smi2021)
 	if (mutex_lock_interruptible(&smi2021->v4l2_lock))
 		return -ERESTARTSYS;
 
-	/* TODO: No need to have these as two functions.
-	 * 	 Exept if I should copy the reason from the skt1160 driver.
+	/* This is split into two functions because I've
+	 * copied this from the stk1160 driver.
+	 *
+	 * That should probably not be neccessary.
 	 */
 	smi2021_cancel_isoc(smi2021);
 	smi2021_free_isoc(smi2021);
@@ -825,7 +827,7 @@ int smi2021_stop(struct smi2021 *smi2021)
 	
 	smi2021_clear_queue(smi2021);
 
-	dev_info(smi2021->dev, "streaming stopped\n");
+	dev_notice(smi2021->dev, "streaming stopped\n");
 
 	mutex_unlock(&smi2021->v4l2_lock);
 
@@ -837,14 +839,15 @@ static void smi2021_release(struct v4l2_device *v4l2_dev)
 	struct smi2021 *smi2021 = container_of(v4l2_dev, struct smi2021,
 						v4l2_dev);
 
-	dev_info(smi2021->dev, "releasing all resource\n");
+	dev_info(smi2021->dev, "releasing all resources\n");
 
 	i2c_del_adapter(&smi2021->i2c_adap);
 	v4l2_ctrl_handler_free(&smi2021->ctrl_handler);
-
 	v4l2_device_unregister(&smi2021->v4l2_dev);
 
 /*	vb2_queue_release(&smi2021->vb_vidq); */
+	dev_info(smi2021->dev, "freeing smi2021-struct\n");
+
 	kfree(smi2021);
 }
 
@@ -1005,9 +1008,12 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	smi2021->gm7113c_overrides.r10_vrln = true;
 	smi2021->gm7113c_overrides.r13_adlsb = true;
 
-	smi2021->gm7113c_platform_data.saa7113_r10_ofts = &smi2021->gm7113c_overrides.r10_ofts;
-	smi2021->gm7113c_platform_data.saa7113_r10_vrln = &smi2021->gm7113c_overrides.r10_vrln;
-	smi2021->gm7113c_platform_data.saa7113_r13_adlsb = &smi2021->gm7113c_overrides.r13_adlsb;
+	smi2021->gm7113c_platform_data.saa7113_r10_ofts =
+					&smi2021->gm7113c_overrides.r10_ofts;
+	smi2021->gm7113c_platform_data.saa7113_r10_vrln =
+					&smi2021->gm7113c_overrides.r10_vrln;
+	smi2021->gm7113c_platform_data.saa7113_r13_adlsb =
+					&smi2021->gm7113c_overrides.r13_adlsb;
 
 	smi2021->gm7113c_info.addr = 0x4a;
 	smi2021->gm7113c_info.platform_data = &smi2021->gm7113c_platform_data;
