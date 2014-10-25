@@ -812,6 +812,9 @@ static void smi2021_stop_hw(struct smi2021 *smi2021)
 
 int smi2021_stop(struct smi2021 *smi2021)
 {
+	if (!smi2021->udev)
+		return -ENODEV;
+
 	if (mutex_lock_interruptible(&smi2021->v4l2_lock))
 		return -ERESTARTSYS;
 
@@ -949,7 +952,7 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 		return -ENOMEM;
 
 	smi2021->dev = dev;
-	smi2021->udev = usb_get_dev(udev);
+	smi2021->udev = udev;
 
 	smi2021->vid_input_count = input_count;
 	smi2021->vid_inputs = vid_inputs;
@@ -986,10 +989,16 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 
 	/* i2c adapter */
 	smi2021->i2c_adap = adap_template;
-	smi2021->i2c_adap.dev.parent = smi2021->dev;
+
+	/* Hack: I have to attach the i2c adapter to the usb-bus to avoid
+	 * some warnings if I unplug the device while the v4l2 device
+	 * is in use.
+	 * I guess this is better than don't giving a parent to the i2c adapter.
+	 */
+	smi2021->i2c_adap.dev.parent = dev->parent->parent;
+	smi2021->i2c_adap.algo_data = smi2021;
 	strlcpy(smi2021->i2c_adap.name, "smi2021",
 				sizeof(smi2021->i2c_adap.name));
-	smi2021->i2c_adap.algo_data = smi2021;
 
 	i2c_set_adapdata(&smi2021->i2c_adap, &smi2021->v4l2_dev);
 
@@ -1032,8 +1041,6 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 			smi2021->vid_inputs[smi2021->cur_input].type, 0, 0);
 
 	usb_set_intfdata(intf, smi2021);
-	smi2021_snd_register(smi2021);
-
 
 	/* video structure */
 	rc = smi2021_video_register(smi2021);
@@ -1042,7 +1049,7 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 		goto unreg_i2c;
 	}
 
-	dev_info(dev, "Somagic Easy-Cap Video Grabber\n");
+	smi2021_snd_register(smi2021);
 
 	return 0;
 
@@ -1079,9 +1086,6 @@ static void smi2021_usb_disconnect(struct usb_interface *intf)
 	mutex_lock(&smi2021->v4l2_lock);
 
 	smi2021_uninit_isoc(smi2021);
-
-	smi2021_snd_unregister(smi2021);
-
 	smi2021_clear_queue(smi2021);
 
 	video_unregister_device(&smi2021->vdev);
@@ -1092,6 +1096,7 @@ static void smi2021_usb_disconnect(struct usb_interface *intf)
 	mutex_unlock(&smi2021->v4l2_lock);
 	mutex_unlock(&smi2021->vb_queue_lock);
 
+	smi2021_snd_unregister(smi2021);
 	/*
 	 * This calls smi2021_release if it's the last reference.
 	 * otherwise, release is postponed until there are no users left.
