@@ -803,7 +803,7 @@ static void smi2021_stop_hw(struct smi2021 *smi2021)
 	if (!smi2021->udev)
 		return;
 
-	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_stream, 1);
+	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_stream, 0);
 
 	smi2021_set_mode(smi2021, SMI2021_MODE_STANDBY);
 
@@ -1017,11 +1017,13 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	smi2021->gm7113c_subdev = v4l2_i2c_new_subdev_board(&smi2021->v4l2_dev,
 							&smi2021->i2c_adap,
 							&smi2021->gm7113c_info, NULL);
-
-	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_routing,
-			smi2021->vid_inputs[smi2021->cur_input].type, 0, 0);
+	/* NTSC is default */
+	smi2021->cur_norm = V4L2_STD_NTSC;
+	smi2021->cur_height = SMI2021_NTSC_LINES;
 	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_std,
 			smi2021->cur_norm);
+	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_routing,
+			smi2021->vid_inputs[smi2021->cur_input].type, 0, 0);
 
 	usb_set_intfdata(intf, smi2021);
 	smi2021_snd_register(smi2021);
@@ -1060,6 +1062,11 @@ static void smi2021_usb_disconnect(struct usb_interface *intf)
 		return;
 
 	smi2021 = usb_get_intfdata(intf);
+
+	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_stream, 0);
+
+	usb_set_interface(udev, 0, 0);
+
 	usb_set_intfdata(intf, NULL);
 
 	mutex_lock(&smi2021->vb_queue_lock);
