@@ -215,8 +215,8 @@ int smi2021_snd_register(struct smi2021 *smi2021)
 	struct snd_pcm *pcm;
 	int rc = 0;
 
-	rc = snd_card_new(smi2021->dev, SNDRV_DEFAULT_IDX1, SNDRV_DEFAULT_STR1,
-			THIS_MODULE, 0, &card);
+	rc = snd_card_new(smi2021->v4l2_dev.dev, SNDRV_DEFAULT_IDX1,
+				SNDRV_DEFAULT_STR1, THIS_MODULE, 0, &card);
 	if (rc < 0)
 		return rc;
 
@@ -268,7 +268,6 @@ void smi2021_stop_audio(struct smi2021 *smi2021)
 	 *
 	 * Is there a better way to do this?
 	 */
-/*
 	if (smi2021->pcm_substream && smi2021->pcm_substream->runtime) {
 		struct snd_pcm_runtime *runtime;
 
@@ -278,7 +277,6 @@ void smi2021_stop_audio(struct smi2021 *smi2021)
 			wake_up(&runtime->sleep);
 		}
 	}
-*/
 }
 
 void smi2021_audio(struct smi2021 *smi2021, u8 *data, int len)
