@@ -343,13 +343,6 @@ int smi2021_video_register(struct smi2021 *smi2021)
 	/* This will be used to set video_device parent */
 	smi2021->vdev.v4l2_dev = &smi2021->v4l2_dev;
 
-	/* NTSC is default */
-	smi2021->cur_norm = V4L2_STD_NTSC;
-	smi2021->cur_height = SMI2021_NTSC_LINES;
-
-	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_std,
-			smi2021->cur_norm);
-
 	video_set_drvdata(&smi2021->vdev, smi2021);
 	rc = video_register_device(&smi2021->vdev, VFL_TYPE_GRABBER, -1);
 	if (rc < 0) {
