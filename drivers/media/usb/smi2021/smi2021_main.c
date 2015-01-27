@@ -842,16 +842,16 @@ static void smi2021_release(struct v4l2_device *v4l2_dev)
 	struct smi2021 *smi2021 = container_of(v4l2_dev, struct smi2021,
 						v4l2_dev);
 
-	printk(KERN_INFO "%s: releasing all resources\n", __func__);
-
 	i2c_del_adapter(&smi2021->i2c_adap);
+
 	v4l2_ctrl_handler_free(&smi2021->ctrl_handler);
 	v4l2_device_unregister(&smi2021->v4l2_dev);
 
-/*	vb2_queue_release(&smi2021->vb_vidq); */
-	printk(KERN_INFO "%s: freeing smi2021-struct\n", __func__);
+	vb2_queue_release(&smi2021->vb_vidq);
 
 	kfree(smi2021);
+
+	printk(KERN_INFO "%s: smi2021_released!\n", __func__);
 }
 
 
@@ -1088,6 +1088,7 @@ static void smi2021_usb_disconnect(struct usb_interface *intf)
 	mutex_unlock(&smi2021->vb_queue_lock);
 
 	smi2021_snd_unregister(smi2021);
+
 	/*
 	 * This calls smi2021_release if it's the last reference.
 	 * otherwise, release is postponed until there are no users left.
