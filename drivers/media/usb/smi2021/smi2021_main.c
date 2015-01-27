@@ -818,13 +818,7 @@ int smi2021_stop(struct smi2021 *smi2021)
 	if (mutex_lock_interruptible(&smi2021->v4l2_lock))
 		return -ERESTARTSYS;
 
-	/* This is split into two functions because I've
-	 * copied this from the stk1160 driver.
-	 *
-	 * That should probably not be neccessary.
-	 */
 	smi2021_cancel_isoc(smi2021);
-	smi2021_free_isoc(smi2021);
 
 	smi2021_stop_hw(smi2021);
 	
