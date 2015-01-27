@@ -351,8 +351,8 @@ int smi2021_video_register(struct smi2021 *smi2021)
 		return rc;
 	}
 
-	v4l2_info(&smi2021->v4l2_dev, "V4L2 device registered as %s\n",
-				video_device_node_name(&smi2021->vdev));
+	v4l2_info(&smi2021->v4l2_dev, "driver version %s, V4L2 device registered as %s\n",
+			GITVERSION, video_device_node_name(&smi2021->vdev));
 
 	return 0;
 }
