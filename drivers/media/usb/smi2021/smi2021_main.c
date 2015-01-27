@@ -990,12 +990,6 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	/* i2c adapter */
 	smi2021->i2c_adap = adap_template;
 
-	/* Hack: I have to attach the i2c adapter to the usb-bus to avoid
-	 * some warnings if I unplug the device while the v4l2 device
-	 * is in use.
-	 * I guess this is better than don't giving a parent to the i2c adapter.
-	 */
-	smi2021->i2c_adap.dev.parent = dev->parent->parent;
 	smi2021->i2c_adap.algo_data = smi2021;
 	strlcpy(smi2021->i2c_adap.name, "smi2021",
 				sizeof(smi2021->i2c_adap.name));
