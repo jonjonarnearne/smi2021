@@ -50,7 +50,7 @@
 #include <sound/pcm_params.h>
 #include <sound/initval.h>
 
-#define SMI2021_DRIVER_VERSION "0.1"
+#define SMI2021_DRIVER_VERSION "0.1-"GITVERSION
 
 #define SMI2021_ISOC_TRANSFERS	16
 #define SMI2021_ISOC_PACKETS	10
