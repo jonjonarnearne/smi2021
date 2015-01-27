@@ -1,4 +1,4 @@
-GIT_VERSION := $(shell cd $(KBUILD_SRC) && git show -s --format=%h)
+GIT_VERSION := $(shell cd $(srctree) && git show -s --format=%h)
 
 smi2021-y := smi2021_main.o		\
 	     smi2021_bootloader.o	\
