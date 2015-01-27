@@ -8,4 +8,4 @@ smi2021-y := smi2021_main.o		\
 
 obj-$(CONFIG_VIDEO_SMI2021) += smi2021.o
 
-ccflags-y += -Idrivers/media/i2c -DGITVERSION=\"$(GIT_VERSION)\"
+ccflags-y += -Idrivers/media/i2c -DGITVERSION=\"-$(GIT_VERSION)\"
