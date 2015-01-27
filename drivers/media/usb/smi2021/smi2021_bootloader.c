@@ -163,7 +163,7 @@ int smi2021_bootloader_probe(struct usb_interface *intf,
 	struct usb_device *udev = interface_to_usbdev(intf);
 
 	const struct firmware *firmware;
-	int rc, i;
+	int i, rc = 0;
 
 	struct smi2021_versions {
 		unsigned int	id;
