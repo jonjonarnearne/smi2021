@@ -1070,10 +1070,7 @@ static void smi2021_usb_disconnect(struct usb_interface *intf)
 
 	smi2021 = usb_get_intfdata(intf);
 
-	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_stream, 0);
-
 	usb_set_interface(udev, 0, 0);
-
 	usb_set_intfdata(intf, NULL);
 
 	mutex_lock(&smi2021->vb_queue_lock);
