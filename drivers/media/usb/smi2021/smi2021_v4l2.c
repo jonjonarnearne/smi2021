@@ -330,7 +330,6 @@ int smi2021_video_register(struct smi2021 *smi2021)
 
 	/* Initalize video_device with a template structure */
 	smi2021->vdev = v4l_template;
-	smi2021->vdev.debug = 0;			/* enable debug */
 	smi2021->vdev.queue = &smi2021->vb_vidq;
 
 	/*
