@@ -350,18 +350,23 @@ static void smi2021_buf_done(struct smi2021 *smi2021)
  *
  * Mark video buffers as done if we have one full frame.
  */
-static void parse_trc(struct smi2021 *smi2021, u8 trc)
+static inline void parse_trc(struct smi2021 *smi2021)
 {
 	struct smi2021_buf *buf = smi2021->cur_buf;
 	int lines_per_field = smi2021->cur_height / 2;
 	int line = 0;
+	u8 trc = *smi2021->copy_ptr;
+	/* Consume this byte */
+	smi2021->copy_ptr++;
 
 	if (!buf) {
 		if (!is_sav(trc))
 			return;
 
+		/*
 		if (!is_active_video(trc))
 			return;
+		*/
 
 		if (is_field2(trc))
 			return;
@@ -381,6 +386,9 @@ static void parse_trc(struct smi2021 *smi2021, u8 trc)
 		} else {
 			/* VBI */
 			buf->in_blank = true;
+			/* This is the start of a VBI line,
+			 * just throw away the rest of the bytes */
+			smi2021->copy_ptr = smi2021->end_ptr;
 		}
 
 		if (!buf->second_field && is_field2(trc)) {
@@ -405,10 +413,11 @@ buf_done:
 	smi2021_buf_done(smi2021);
 }
 
-static void copy_video(struct smi2021 *smi2021, u8 p)
+static inline void copy_video(struct smi2021 *smi2021)
 {
 	struct smi2021_buf *buf = smi2021->cur_buf;
 
+	int size, remain, copy_size;
 	int lines_per_field = smi2021->cur_height / 2;
 	int line = 0;
 	int pos_in_line = 0;
@@ -416,15 +425,15 @@ static void copy_video(struct smi2021 *smi2021, u8 p)
 	u8 *dst;
 
 	if (!buf)
-		return;
+		goto err_out;
 
 	if (buf->in_blank)
-		return;
+		goto err_out;
 
 	if (buf->pos >= buf->length) {
 		smi2021->stats.ovflw_bufs++;
 		smi2021_buf_done(smi2021);
-		return;
+		goto err_out;
 	}
 
 	pos_in_line = buf->pos % SMI2021_BYTES_PER_LINE;
@@ -437,7 +446,7 @@ static void copy_video(struct smi2021 *smi2021, u8 p)
 		 * The device will sometimes give us too many bytes
 		 * for a line, before we get a new TRC.
 		 * We just drop these bytes */
-		return;
+		goto err_out;
 	}
 
 	if (buf->second_field)
@@ -446,63 +455,64 @@ static void copy_video(struct smi2021 *smi2021, u8 p)
 	offset += (SMI2021_BYTES_PER_LINE * line * 2) + pos_in_line;
 
 	/* Will this ever happen? */
-	if (offset >= buf->length)
-		return;
+	if (WARN_ON(offset >= buf->length))
+		goto err_out;
+
+	remain = SMI2021_BYTES_PER_LINE - pos_in_line;
+	if (remain < 0) {
+		dev_info(smi2021->dev, "Negative remain?\n");
+		goto err_out;
+	}
+
+	size = smi2021->end_ptr - smi2021->copy_ptr;
+
+	copy_size = (size > remain) ? remain : size;
+
+	if (buf->pos + copy_size > buf->length) {
+		smi2021_buf_done(smi2021);
+		goto err_out;
+	}
 
 	dst = buf->mem + offset;
-	*dst = p;
-	buf->pos++;
+	memcpy(dst, smi2021->copy_ptr, copy_size);
+	buf->pos += copy_size;
+
+	smi2021->copy_ptr += copy_size;
+	return;
+
+err_out:
+	smi2021->copy_ptr++;
 }
 
-/*
- * Scan the saa7113 Active video data.
- * This data is:
- *	4 bytes header (0xff 0x00 0x00 [TRC/SAV])
- *	1440 bytes of UYUV Video data
- *	4 bytes footer (0xff 0x00 0x00 [TRC/EAV])
- *
- * TRC = Time Reference Code.
- * SAV = Start Active Video.
- * EAV = End Active Video.
- * This is described in the saa7113 datasheet.
- */
-static void parse_video(struct smi2021 *smi2021, u8 *p, int size)
+/* The p buffer will always contain 1020 bytes of data. */
+#define is_trc(a) \
+	((a & cpu_to_le32(0x80ffffff)) == cpu_to_le32(0x800000ff))
+static void parse_video(struct smi2021 *smi2021, u8 *p)
 {
-	int i;
+	int offset;
+	memcpy(smi2021->offset_ptr, p, 1020);
+	smi2021->copy_ptr = smi2021->copy_buf;
 
-	for (i = 0; i < size; i++) {
-		switch (smi2021->sync_state) {
-		case HSYNC:
-			if (p[i] == 0xff)
-				smi2021->sync_state = SYNCZ1;
-			else
-				copy_video(smi2021, p[i]);
-			break;
-		case SYNCZ1:
-			if (p[i] == 0x00) {
-				smi2021->sync_state = SYNCZ2;
-			} else {
-				smi2021->sync_state = HSYNC;
-				copy_video(smi2021, 0xff);
-				copy_video(smi2021, p[i]);
-			}
-			break;
-		case SYNCZ2:
-			if (p[i] == 0x00) {
-				smi2021->sync_state = TRC;
-			} else {
-				smi2021->sync_state = HSYNC;
-				copy_video(smi2021, 0xff);
-				copy_video(smi2021, 0x00);
-				copy_video(smi2021, p[i]);
-			}
-			break;
-		case TRC:
-			smi2021->sync_state = HSYNC;
-			parse_trc(smi2021, p[i]);
-			break;
+	/* We scan the buffer as an unsigned 32bit integer,
+	 * looking for the TRC.
+	 */
+	while (smi2021->copy_ptr < smi2021->end_ptr - 3) {
+		if (unlikely(is_trc(*(u32 *)smi2021->copy_ptr))) {
+			smi2021->copy_ptr += 3;
+			parse_trc(smi2021);
+			continue;
 		}
+
+		copy_video(smi2021);
 	}
+
+	offset = smi2021->end_ptr - smi2021->copy_ptr;
+	if (WARN_ON(offset > 4))
+		offset = 0;
+
+	memcpy(smi2021->copy_buf, smi2021->copy_ptr, offset);
+	smi2021->offset_ptr = smi2021->copy_buf + offset;
+	smi2021->end_ptr = smi2021->offset_ptr + 1020;
 }
 
 /*
@@ -526,7 +536,7 @@ static void process_packet(struct smi2021 *smi2021, u8 *p, int size)
 		header = (u32 *)(p + i);
 		switch (*header) {
 		case cpu_to_be32(0xaaaa0000):
-			parse_video(smi2021, p+i+4, 0x400-4);
+			parse_video(smi2021, p+i+4);
 			break;
 		case cpu_to_be32(0xaaaa0001):
 			smi2021_audio(smi2021, p+i+4, 0x400-4);
@@ -736,6 +746,9 @@ int smi2021_start(struct smi2021 *smi2021)
 
 	if (mutex_lock_interruptible(&smi2021->v4l2_lock))
 		return -ERESTARTSYS;
+
+	smi2021->offset_ptr = smi2021->copy_buf;
+	smi2021->end_ptr = smi2021->offset_ptr + 1020;
 
 	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_stream, 1);
 
@@ -958,6 +971,12 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	if (!smi2021)
 		return -ENOMEM;
 
+	smi2021->copy_buf = kzalloc(0x400, GFP_KERNEL);
+	if (!smi2021->copy_buf) {
+		rc = -ENOMEM;
+		goto free_smi2021_err;
+	}
+
 	smi2021->dev = dev;
 	smi2021->udev = udev;
 
@@ -1061,6 +1080,8 @@ unreg_v4l2:
 free_ctrl:
 	v4l2_ctrl_handler_free(&smi2021->ctrl_handler);
 free_err:
+	kfree(smi2021->copy_buf);
+free_smi2021_err:
 	kfree(smi2021);
 
 	return rc;
@@ -1095,6 +1116,8 @@ static void smi2021_usb_disconnect(struct usb_interface *intf)
 	mutex_unlock(&smi2021->vb_queue_lock);
 
 	smi2021_snd_unregister(smi2021);
+
+	kfree(smi2021->copy_buf);
 
 	/*
 	 * This calls smi2021_release if it's the last reference.

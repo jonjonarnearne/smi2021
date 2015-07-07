@@ -180,6 +180,12 @@ struct smi2021 {
 	struct list_head		avail_bufs;
 	struct smi2021_buf		*cur_buf;
 
+	/* Copy buffer for video parsing */
+	u8				*copy_buf;
+	u8				*offset_ptr;
+	u8				*copy_ptr;
+	u8				*end_ptr;
+
 	int				sequence;
 
 	/* Frame settings */
