@@ -327,9 +327,11 @@ static void smi2021_buf_done(struct smi2021 *smi2021)
 	if (buf->pos < (SMI2021_BYTES_PER_LINE * smi2021->cur_height)) {
 		vb2_set_plane_payload(&buf->vb, 0, 0);
 		vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
+		smi2021->stats.bad_bufs++;
 	} else {
 		vb2_set_plane_payload(&buf->vb, 0, buf->pos);
 		vb2_buffer_done(&buf->vb, VB2_BUF_STATE_DONE);
+		smi2021->stats.good_bufs++;
 	}
 
 	smi2021->cur_buf = NULL;
@@ -420,6 +422,7 @@ static void copy_video(struct smi2021 *smi2021, u8 p)
 		return;
 
 	if (buf->pos >= buf->length) {
+		smi2021->stats.ovflw_bufs++;
 		smi2021_buf_done(smi2021);
 		return;
 	}
@@ -827,6 +830,16 @@ int smi2021_stop(struct smi2021 *smi2021)
 	dev_notice(smi2021->dev, "streaming stopped\n");
 
 	mutex_unlock(&smi2021->v4l2_lock);
+
+	dev_info(smi2021->dev, "Stats:\n"
+		"    good_bufs: %u\n"
+		"    bad_bufs: %u\n"
+		"    ovflw_bufs: %u\n",
+		smi2021->stats.good_bufs,
+		smi2021->stats.bad_bufs,
+		smi2021->stats.ovflw_bufs);
+
+	memset(&smi2021->stats, 0, sizeof(smi2021->stats));
 
 	return 0;
 }

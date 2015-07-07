@@ -203,6 +203,12 @@ struct smi2021 {
 	int				cur_input;
 
 	int				iso_size;
+
+	struct {
+		unsigned int 	good_bufs;
+		unsigned int	bad_bufs;
+		unsigned int	ovflw_bufs;
+	}				stats;
 };
 
 /* Provided by smi2021_bootloader.c */
