@@ -524,7 +524,6 @@ static void parse_video(struct smi2021 *smi2021, u8 *p)
 static void process_packet(struct smi2021 *smi2021, u8 *p, int size)
 {
 	int i;
-	u32 *header;
 
 	if (size % 0x400 != 0) {
 		printk_ratelimited(KERN_INFO "smi2021::%s: size: %d\n",
@@ -533,14 +532,17 @@ static void process_packet(struct smi2021 *smi2021, u8 *p, int size)
 	}
 
 	for (i = 0; i < size; i += 0x400) {
-		header = (u32 *)(p + i);
-		switch (*header) {
+		switch (*(u32 *)(p + i)) {
 		case cpu_to_be32(0xaaaa0000):
 			parse_video(smi2021, p+i+4);
 			break;
 		case cpu_to_be32(0xaaaa0001):
 			smi2021_audio(smi2021, p+i+4, 0x400-4);
 			break;
+		default:
+			dev_warn(smi2021->dev,
+				"Got unknown header [%02x %02x %02x %02x]\n",
+				p[i], p[i+1], p[i+2], p[i+3]);
 		}
 	}
 }
