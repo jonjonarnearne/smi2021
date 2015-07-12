@@ -211,7 +211,7 @@ static void buffer_queue(struct vb2_buffer *vb)
 	struct smi2021 *smi2021 = vb2_get_drv_priv(vb->vb2_queue);
 	struct smi2021_buf *buf = container_of(vb, struct smi2021_buf, vb);
 
-	spin_lock_irqsave(&smi2021->buf_lock, flags);
+	spin_lock_irqsave(&smi2021->buf_list_lock, flags);
 	if (!smi2021->udev) {
 		/*
 		 * If the device is disconnected return the buffer to userspace
@@ -236,7 +236,7 @@ static void buffer_queue(struct vb2_buffer *vb)
 		else
 			list_add_tail(&buf->list, &smi2021->avail_bufs);
 	}
-	spin_unlock_irqrestore(&smi2021->buf_lock, flags);
+	spin_unlock_irqrestore(&smi2021->buf_list_lock, flags);
 }
 
 static int start_streaming(struct vb2_queue *vq, unsigned int count)
@@ -280,7 +280,7 @@ void smi2021_clear_queue(struct smi2021 *smi2021)
 	dev_info(smi2021->dev, "clear_queue called\n");
 
 	/* Release all active buffers */
-	spin_lock_irqsave(&smi2021->buf_lock, flags);
+	spin_lock_irqsave(&smi2021->buf_list_lock, flags);
 	while (!list_empty(&smi2021->avail_bufs)) {
 		buf = list_first_entry(&smi2021->avail_bufs,
 				struct smi2021_buf, list);
@@ -289,7 +289,10 @@ void smi2021_clear_queue(struct smi2021 *smi2021)
 		dev_info(smi2021->dev, "buffer [%p/%d] aborted\n",
 				buf, buf->vb.v4l2_buf.index);
 	}
+	spin_unlock_irqrestore(&smi2021->buf_list_lock, flags);
+
 	/* It's important to clear current buffer */
+	spin_lock_irqsave(&smi2021->buf_lock, flags);
 	if (smi2021->cur_buf) {
 		buf = smi2021->cur_buf;
 		vb2_buffer_done(&buf->vb, VB2_BUF_STATE_ERROR);
@@ -298,6 +301,7 @@ void smi2021_clear_queue(struct smi2021 *smi2021)
 	}
 	smi2021->cur_buf = NULL;
 	spin_unlock_irqrestore(&smi2021->buf_lock, flags);
+
 	dev_info(smi2021->dev, "returning from clear_queue\n");
 }
 

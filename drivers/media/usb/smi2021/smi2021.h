@@ -176,8 +176,9 @@ struct smi2021 {
 	struct smi2021_isoc_ctl		isoc_ctl;
 
 	/* List of videobuf2 buffers protected by a lock. */
-	spinlock_t			buf_lock;
+	spinlock_t			buf_list_lock;
 	struct list_head		avail_bufs;
+	spinlock_t			buf_lock;
 	struct smi2021_buf		*cur_buf;
 
 	/* Copy buffer for video parsing */

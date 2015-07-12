@@ -298,6 +298,7 @@ static int smi2021_initialize(struct smi2021 *smi2021)
 	return 0;
 }
 
+/* This must be called with buf_lock held */
 static struct smi2021_buf *smi2021_get_buf(struct smi2021 *smi2021)
 {
 	unsigned long flags;
@@ -305,17 +306,18 @@ static struct smi2021_buf *smi2021_get_buf(struct smi2021 *smi2021)
 
 	WARN_ON(smi2021->cur_buf);
 
-	spin_lock_irqsave(&smi2021->buf_lock, flags);
+	spin_lock_irqsave(&smi2021->buf_list_lock, flags);
 	if (!list_empty(&smi2021->avail_bufs)) {
 		buf = list_first_entry(&smi2021->avail_bufs,
 						struct smi2021_buf, list);
 		list_del(&buf->list);
 	}
-	spin_unlock_irqrestore(&smi2021->buf_lock, flags);
+	spin_unlock_irqrestore(&smi2021->buf_list_lock, flags);
 
 	return buf;
 }
 
+/* This must be called with buf_lock held */
 static void smi2021_buf_done(struct smi2021 *smi2021)
 {
 	struct smi2021_buf *buf = smi2021->cur_buf;
@@ -988,6 +990,7 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 
 	/* videobuf2 struct and locks */
 
+	spin_lock_init(&smi2021->buf_list_lock);
 	spin_lock_init(&smi2021->buf_lock);
 	mutex_init(&smi2021->v4l2_lock);
 	mutex_init(&smi2021->vb_queue_lock);
