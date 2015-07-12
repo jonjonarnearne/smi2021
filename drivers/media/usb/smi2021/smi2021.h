@@ -71,7 +71,10 @@
 #define SMI2021_PAL_LINES	576
 #define SMI2021_NTSC_LINES	484
 
-/* Timing Referance Codes, see saa7113 datasheet */
+#define SMI2021_CHUNK_SIZE		0x400
+#define SMI2021_VIDEO_CHUNK_SIZE	(SMI2021_CHUNK_SIZE - 4)
+
+/* Timing Reference Codes, see saa7113 datasheet */
 #define SMI2021_TRC_EAV		0x10
 #define SMI2021_TRC_VBI		0x20
 #define SMI2021_TRC_FIELD_2	0x40
@@ -117,6 +120,11 @@ struct smi2021_buf {
 	bool				in_blank;
 	unsigned int			pos;
 
+	enum {
+		SMI2021_INITIAL,
+		SMI2021_EXPECT_ODD,
+		SMI2021_CAPTURE
+	}				state;
 	/* ActiveVideo - Line counter */
 	u16				trc_av;
 };
@@ -124,13 +132,6 @@ struct smi2021_buf {
 struct smi2021_vid_input {
 	char				*name;
 	int				type;
-};
-
-enum smi2021_sync {
-	HSYNC,
-	SYNCZ1,
-	SYNCZ2,
-	TRC
 };
 
 struct gm7113c_init_overrides {
@@ -153,6 +154,12 @@ struct smi2021_isoc_ctl {
 	char **transfer_buffer;
 
 };
+struct smi2021_scan_buf {
+	u8				*buffer;
+	u8				*offset_ptr;
+	u8				*read_ptr;
+	u8				*end_ptr;
+};
 
 struct smi2021 {
 	struct device			*dev;
@@ -160,6 +167,9 @@ struct smi2021 {
 	struct i2c_adapter		i2c_adap;
 	struct i2c_client		i2c_client;
 	struct v4l2_ctrl_handler	ctrl_handler;
+
+	struct snd_card			*snd_card;
+	struct snd_pcm_substream	*pcm_substream;
 
 	/* i2c subdevice setup */
 	struct i2c_board_info		gm7113c_info;
@@ -182,29 +192,19 @@ struct smi2021 {
 	struct smi2021_buf		*cur_buf;
 
 	/* Copy buffer for video parsing */
-	u8				*copy_buf;
-	u8				*offset_ptr;
-	u8				*copy_ptr;
-	u8				*end_ptr;
-
+	struct smi2021_scan_buf		scan_buf;
 	int				sequence;
-
-	/* Frame settings */
-	int				cur_height;
-	v4l2_std_id			cur_norm;
-	enum smi2021_sync		sync_state;
-
-	struct snd_card			*snd_card;
-	struct snd_pcm_substream	*pcm_substream;
 
 	unsigned int			pcm_write_ptr;
 	unsigned int			pcm_complete_samples;
-
 	u8				pcm_read_offset;
+
 	struct work_struct		adev_capture_trigger;
 	atomic_t			adev_capturing;
 
 	/* Device settings */
+	int				cur_height;
+	v4l2_std_id			cur_norm;
 	unsigned int			vid_input_count;
 	const struct smi2021_vid_input	*vid_inputs;
 	int				cur_input;

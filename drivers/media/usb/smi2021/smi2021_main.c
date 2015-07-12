@@ -314,6 +314,7 @@ static struct smi2021_buf *smi2021_get_buf(struct smi2021 *smi2021)
 	}
 	spin_unlock_irqrestore(&smi2021->buf_list_lock, flags);
 
+	smi2021->cur_buf = buf;
 	return buf;
 }
 
@@ -354,71 +355,95 @@ static void smi2021_buf_done(struct smi2021 *smi2021)
  */
 static inline void parse_trc(struct smi2021 *smi2021)
 {
-	struct smi2021_buf *buf = smi2021->cur_buf;
+	struct smi2021_scan_buf *scan_buf = &smi2021->scan_buf;
+	struct smi2021_buf *buf;
+	unsigned long flags;
 	int lines_per_field = smi2021->cur_height / 2;
 	int line = 0;
-	u8 trc = *smi2021->copy_ptr;
-	/* Consume this byte */
-	smi2021->copy_ptr++;
+	u8 trc = *scan_buf->read_ptr;
+	/* Consume atleast one byte */
+	scan_buf->read_ptr++;
 
+	spin_lock_irqsave(&smi2021->buf_lock, flags);
+	buf = smi2021->cur_buf;
+
+	/* If we don't have a buf, try to get one */
 	if (!buf) {
-		if (!is_sav(trc))
-			return;
-
-		/*
-		if (!is_active_video(trc))
-			return;
-		*/
-
-		if (is_field2(trc))
-			return;
-
 		buf = smi2021_get_buf(smi2021);
-		if (!buf)
-			return;
-
-		smi2021->cur_buf = buf;
+		if (!buf) {
+			/* Don't spend more time with this packet. */
+			scan_buf->read_ptr = scan_buf->end_ptr;
+			goto err_out;
+		}
 	}
 
-	if (is_sav(trc)) {
-		/* Start of VBI or ACTIVE VIDEO */
-		if (is_active_video(trc)) {
-			buf->in_blank = false;
-			buf->trc_av++;
-		} else {
-			/* VBI */
-			buf->in_blank = true;
-			/* This is the start of a VBI line,
-			 * just throw away the rest of the bytes */
-			smi2021->copy_ptr = smi2021->end_ptr;
-		}
+	switch(buf->state) {
+	case SMI2021_INITIAL:
+		if (!is_active_video(trc) && !is_field2(trc))
+			buf->state = SMI2021_EXPECT_ODD;
+		break;
+	case SMI2021_EXPECT_ODD:
+		if (unlikely(is_field2(trc)))
+			buf->state = SMI2021_INITIAL;
 
-		if (!buf->second_field && is_field2(trc)) {
-			line = buf->pos / SMI2021_BYTES_PER_LINE;
-			if (line < lines_per_field)
+		if (!is_active_video(trc))
+			break;
+
+		buf->state = SMI2021_CAPTURE;
+		/* Fall trough */
+	case SMI2021_CAPTURE:
+		if (is_sav(trc)) {
+			/* Start of VBI or ACTIVE VIDEO */
+			if (is_active_video(trc)) {
+				buf->in_blank = false;
+				buf->trc_av++;
+			} else {
+				/* VBI */
+				buf->in_blank = true;
+				/* This is the start of a VBI line,
+				 * just throw away the rest of the bytes */
+				scan_buf->read_ptr = scan_buf->end_ptr;
+			}
+
+			if (!buf->second_field && is_field2(trc)) {
+				line = buf->pos / SMI2021_BYTES_PER_LINE;
+				if (line < lines_per_field) {
+					/* This buffer has failed */
+					goto buf_done;
+				}
+
+				buf->second_field = true;
+				buf->trc_av = 0;
+			}
+
+			if (buf->second_field && !is_field2(trc))
 				goto buf_done;
 
-			buf->second_field = true;
-			buf->trc_av = 0;
+		} else {
+			/* End of VBI or ACTIVE VIDEO */
+			buf->in_blank = true;
 		}
-
-		if (buf->second_field && !is_field2(trc))
-			goto buf_done;
-	} else {
-		/* End of VBI or ACTIVE VIDEO */
-		buf->in_blank = true;
 	}
 
+err_out:
+	spin_unlock_irqrestore(&smi2021->buf_lock, flags);
 	return;
 
 buf_done:
+	spin_unlock_irqrestore(&smi2021->buf_lock, flags);
 	smi2021_buf_done(smi2021);
 }
 
+/* It's important that this function allways increases
+ * the smi2021->copy_ptr before returning.
+ * If we fail to do this, we would end with an
+ * infinite loop in the parse_video function.
+ */
 static inline void copy_video(struct smi2021 *smi2021)
 {
-	struct smi2021_buf *buf = smi2021->cur_buf;
-
+	struct smi2021_scan_buf *scan_buf = &smi2021->scan_buf;
+	struct smi2021_buf *buf;
+	unsigned long flags;
 	int size, remain, copy_size;
 	int lines_per_field = smi2021->cur_height / 2;
 	int line = 0;
@@ -426,7 +451,12 @@ static inline void copy_video(struct smi2021 *smi2021)
 	unsigned int offset = 0;
 	u8 *dst;
 
+	spin_lock_irqsave(&smi2021->buf_lock, flags);
+	buf = smi2021->cur_buf;
 	if (!buf)
+		goto err_out;
+
+	if (buf->state == SMI2021_INITIAL)
 		goto err_out;
 
 	if (buf->in_blank)
@@ -466,7 +496,7 @@ static inline void copy_video(struct smi2021 *smi2021)
 		goto err_out;
 	}
 
-	size = smi2021->end_ptr - smi2021->copy_ptr;
+	size = scan_buf->end_ptr - scan_buf->read_ptr;
 
 	copy_size = (size > remain) ? remain : size;
 
@@ -476,45 +506,53 @@ static inline void copy_video(struct smi2021 *smi2021)
 	}
 
 	dst = buf->mem + offset;
-	memcpy(dst, smi2021->copy_ptr, copy_size);
+	memcpy(dst, scan_buf->read_ptr, copy_size);
 	buf->pos += copy_size;
 
-	smi2021->copy_ptr += copy_size;
+	spin_unlock_irqrestore(&smi2021->buf_lock, flags);
+
+	scan_buf->read_ptr += copy_size;
 	return;
 
 err_out:
-	smi2021->copy_ptr++;
+	spin_unlock_irqrestore(&smi2021->buf_lock, flags);
+	scan_buf->read_ptr++;
 }
 
-/* The p buffer will always contain 1020 bytes of data. */
+/* The TRC is four bytes long (0xff 0x00 0x00 [SAV/EAV]),
+ * where the last byte is the SAV or EAV */
 #define is_trc(a) \
-	((a & cpu_to_le32(0x80ffffff)) == cpu_to_le32(0x800000ff))
-static void parse_video(struct smi2021 *smi2021, u8 *p)
+	((a & cpu_to_be32(0xffffff80)) == cpu_to_be32(0xff000080))
+
+static void parse_video_chunk(struct smi2021 *smi2021, u8 *chunk)
 {
 	int offset;
-	memcpy(smi2021->offset_ptr, p, 1020);
-	smi2021->copy_ptr = smi2021->copy_buf;
+	struct smi2021_scan_buf *scan_buf = &smi2021->scan_buf;
 
-	/* We scan the buffer as an unsigned 32bit integer,
-	 * looking for the TRC.
+	/* Because we scan the chunk as an array of u32,
+	 * we sometimes have to skip some of the last three bytes.
+	 * So we copy the last X bytes to the start of the scan buffer,
+	 * and copy the next chunk after these bytes.
 	 */
-	while (smi2021->copy_ptr < smi2021->end_ptr - 3) {
-		if (unlikely(is_trc(*(u32 *)smi2021->copy_ptr))) {
-			smi2021->copy_ptr += 3;
-			parse_trc(smi2021);
-			continue;
-		}
+	memcpy(scan_buf->offset_ptr, chunk, SMI2021_VIDEO_CHUNK_SIZE);
+	scan_buf->read_ptr = scan_buf->buffer;
 
-		copy_video(smi2021);
+	while (scan_buf->read_ptr < scan_buf->end_ptr - 3) {
+		if (unlikely(is_trc(*(u32 *)scan_buf->read_ptr))) {
+			scan_buf->read_ptr += 3;
+			parse_trc(smi2021);
+		} else {
+			copy_video(smi2021);
+		}
 	}
 
-	offset = smi2021->end_ptr - smi2021->copy_ptr;
-	if (WARN_ON(offset > 4))
+	offset = scan_buf->end_ptr - scan_buf->read_ptr;
+	if (WARN_ON(offset > (SMI2021_CHUNK_SIZE - SMI2021_VIDEO_CHUNK_SIZE)))
 		offset = 0;
 
-	memcpy(smi2021->copy_buf, smi2021->copy_ptr, offset);
-	smi2021->offset_ptr = smi2021->copy_buf + offset;
-	smi2021->end_ptr = smi2021->offset_ptr + 1020;
+	memcpy(scan_buf->buffer, scan_buf->read_ptr, offset);
+	scan_buf->offset_ptr = scan_buf->buffer + offset;
+	scan_buf->end_ptr = scan_buf->offset_ptr + SMI2021_VIDEO_CHUNK_SIZE;
 }
 
 /*
@@ -527,19 +565,20 @@ static void process_packet(struct smi2021 *smi2021, u8 *p, int size)
 {
 	int i;
 
-	if (size % 0x400 != 0) {
-		printk_ratelimited(KERN_INFO "smi2021::%s: size: %d\n",
+	if (WARN_ON(size % SMI2021_CHUNK_SIZE != 0)) {
+		printk_ratelimited(KERN_WARNING "smi2021::%s: size: %d\n",
 				__func__, size);
 		return;
 	}
 
-	for (i = 0; i < size; i += 0x400) {
+	for (i = 0; i < size; i += SMI2021_CHUNK_SIZE) {
 		switch (*(u32 *)(p + i)) {
 		case cpu_to_be32(0xaaaa0000):
-			parse_video(smi2021, p+i+4);
+			parse_video_chunk(smi2021, p+i+4);
 			break;
 		case cpu_to_be32(0xaaaa0001):
-			smi2021_audio(smi2021, p+i+4, 0x400-4);
+			smi2021_audio(smi2021, p+i+4,
+					SMI2021_CHUNK_SIZE-4);
 			break;
 		default:
 			dev_warn(smi2021->dev,
@@ -742,7 +781,6 @@ int smi2021_start(struct smi2021 *smi2021)
 {
 	int i, rc;
 	u8 reg;
-	smi2021->sync_state = HSYNC;
 
 	/* Check device presence */
 	if (!smi2021->udev)
@@ -751,8 +789,9 @@ int smi2021_start(struct smi2021 *smi2021)
 	if (mutex_lock_interruptible(&smi2021->v4l2_lock))
 		return -ERESTARTSYS;
 
-	smi2021->offset_ptr = smi2021->copy_buf;
-	smi2021->end_ptr = smi2021->offset_ptr + 1020;
+	smi2021->scan_buf.offset_ptr = smi2021->scan_buf.buffer;
+	smi2021->scan_buf.end_ptr = smi2021->scan_buf.buffer;
+	smi2021->scan_buf.end_ptr += SMI2021_VIDEO_CHUNK_SIZE;
 
 	v4l2_subdev_call(smi2021->gm7113c_subdev, video, s_stream, 1);
 
@@ -975,8 +1014,8 @@ static int smi2021_usb_probe(struct usb_interface *intf,
 	if (!smi2021)
 		return -ENOMEM;
 
-	smi2021->copy_buf = kzalloc(0x400, GFP_KERNEL);
-	if (!smi2021->copy_buf) {
+	smi2021->scan_buf.buffer = kzalloc(SMI2021_CHUNK_SIZE, GFP_KERNEL);
+	if (!smi2021->scan_buf.buffer) {
 		rc = -ENOMEM;
 		goto free_smi2021_err;
 	}
@@ -1085,7 +1124,7 @@ unreg_v4l2:
 free_ctrl:
 	v4l2_ctrl_handler_free(&smi2021->ctrl_handler);
 free_err:
-	kfree(smi2021->copy_buf);
+	kfree(smi2021->scan_buf.buffer);
 free_smi2021_err:
 	kfree(smi2021);
 
@@ -1122,7 +1161,7 @@ static void smi2021_usb_disconnect(struct usb_interface *intf)
 
 	smi2021_snd_unregister(smi2021);
 
-	kfree(smi2021->copy_buf);
+	kfree(smi2021->scan_buf.buffer);
 
 	/*
 	 * This calls smi2021_release if it's the last reference.

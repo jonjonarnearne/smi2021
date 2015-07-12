@@ -226,6 +226,7 @@ static void buffer_queue(struct vb2_buffer *vb)
 		buf->trc_av = 0;
 		buf->in_blank = true;
 		buf->second_field = false;
+		buf->state = SMI2021_INITIAL;
 
 		/*
 		 * If the buffer length is less than expected,
